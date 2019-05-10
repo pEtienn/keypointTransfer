@@ -1,5 +1,18 @@
 import numpy as np
 from pyflann import *
+from scipy.ndimage import gaussian_filter
+from scipy.ndimage import zoom
+import nibabel as nib
+import time
+
+#COMMENT TEMPLATE
+"""
+__FUNCTION DESCRIPTION__
+ *** INPUT ***
+__list here__
+ *** OUTPUT ***
+__list here__
+"""
 
 class keyInformationPosition():
     scale=3
@@ -8,7 +21,30 @@ class keyInformationPosition():
     
 kIP=keyInformationPosition()
 
+def getNiiData(niiPath):
+    time.sleep(0.1)
+    img=nib.load(niiPath)
+    return img.get_fdata()
 
+def getImgLabels(niiPath,keypointXYZs):
+    img=getNiiData(niiPath)
+    labelsOut=np.zeros(keypointXYZs.shape[0])
+    for key in range(keypointXYZs.shape[0]):
+        xyz=tuple((keypointXYZs[key,:]).astype(int))
+        labelsOut[key]=img[xyz]
+    return labelsOut
+
+def getAllLabels(niiPaths,allMatches,trainingImages):
+    listLabels=[]
+    for img in range(len(allMatches)):
+        matches=allMatches[img]
+        niiPath=niiPaths[img]
+        trainingImage=trainingImages[img]
+        XYZ=(trainingImage[matches[:,1].astype(int),kIP.XYZ]).astype(int)
+        listLabels.append(getImgLabels(niiPath,XYZ))
+    return listLabels
+        
+        
         
 def keypointDescriptorMatch(testImage, trainingImages):
     #create one matchmap for each training images
@@ -16,10 +52,10 @@ def keypointDescriptorMatch(testImage, trainingImages):
         #find if there is any similar keypoint in the trainingImage
     flannM = FLANN()
     allMatches=[]
-    for imageI in range(np.shape(trainingImages)[0]):
+    for imageI in range(len(trainingImages)):
         
         trainingImage=trainingImages[imageI]
-        params = flannM.build_index(trainingImage[:,kIP.descriptor], algorithm="autotuned", target_precision=0.9, log_level = "info");
+        params = flannM.build_index(trainingImage[:,kIP.descriptor], algorithm="kdtree",trees=4);
         
         matches=np.full((np.shape(testImage)[0],2),-1)
         
@@ -28,89 +64,78 @@ def keypointDescriptorMatch(testImage, trainingImages):
             result, dist = flannM.nn_index(testImage[keyI,kIP.descriptor],2, checks=params["checks"]);
             
             #check scale and distance ratio
-            sT=trainingImage[result[0,1],kIP.scale]
+            sT=trainingImage[result[0,0],kIP.scale]
             sI=testImage[keyI,kIP.scale]
             if (sI/sT>=0.5 and sI/sT<=2) and dist[0,0]/dist[0,1]<=0.9:
-                matches[keyI,:]=[keyI,result[0,1]]
+                matches[keyI,:]=[keyI,result[0,0]]
         #remove all key row where there were no valid matches
         matches2=matches[matches.min(axis=1)>=0,:]
         allMatches.append(matches2)
         print("index of image matched:",imageI)
     return allMatches   
 
-def houghTransform(matchedXYZDifference):
-    #input should be matchedTestXYZ-matchedtrainingXYZ
+def houghTransformGaussian(matchedXYZDifference,sigma=3):
+    """
+    hough transform using using gaussian filter instead of bins to detect most probable translation
+     *** INPUT ***
+    matchedXYZDifference: x*y
+       x:number of match
+       y: X Y Z
+    sigma: parameter of the gaussian filter
+     *** OUTPUT ***
+    probMap: probability map indexed by translation XYZ
+    probableDXYZ: most probable translation
+    """
     dXYZ=matchedXYZDifference
-    flannH=FLANN()
-    params = flannH.build_index(dXYZ, algorithm="kdtree");
-    nbPointInSphere=np.round(np.shape(dXYZ)[0]/2).astype(int)
+    maxDiff=np.amax(np.abs(dXYZ)).astype(int)
+    s=maxDiff*2+1
+    probMap=np.zeros((s,s,s))
+    for j in range(np.shape(dXYZ)[0]):
+        xyz= tuple((np.floor(dXYZ[j,:])+maxDiff).astype(int))
+        probMap[xyz]=probMap[xyz]+1
+    probableDXYZ=np.unravel_index(np.argmax(probMap),probMap.shape)-maxDiff
+    probMap=gaussian_filter(probMap,sigma)
+    #probMap=probMap/np.sum(probMap)  
     
-    #initiation of bestDist and bestKeyI
-    result, dist = flannH.nn_index(dXYZ[0,:],nbPointInSphere, checks=params["checks"]);
-    distSum=np.sum(dist)
-    bestDist=distSum
-    bestKeyI=0
-    
-    for keyI in range(1,np.shape(dXYZ)[0]):
-        result, dist = flannH.nn_index(dXYZ[keyI,:],nbPointInSphere, checks=params["checks"]);
-        distSum=np.sum(dist)
-        if distSum<bestDist:
-            bestDist=distSum
-            bestKeyI=keyI
-    probableDXYZ=dXYZ[bestKeyI,:]
-    return probableDXYZ
-
-def getMatchProbabilityDistribution(distanceTestedXYZDifference):
-    n=np.shape(distanceTestedXYZDifference)[0]
-    sumOfDistance=np.zeros(n)
-    probabilityDistribution=np.ones(n)
-    
-    for i in range(np.shape(distanceTestedXYZDifference)[0]):
-        d=np.copy(distanceTestedXYZDifference)
-        d=d-d[i,:]
-        d=np.multiply(d,d)
-        sumOfDistance[i]=np.sum(d)
-    
-    
-    probabilityDistribution=np.divide(probabilityDistribution,sumOfDistance)
-    probabilityDistribution=probabilityDistribution/(np.sum(probabilityDistribution))
-    
-    return probabilityDistribution    
-        
+    return [probMap, probableDXYZ]
 
 def matchDistanceSelection(allMatches,testImage,trainingImages):
     distanceTestedMatches=[]
     for j in range(len(allMatches)):
         match=allMatches[j]
         trainingImage=trainingImages[j]
-        t=np.zeros((np.shape(match)[0],3))
         
         testXYZ=testImage[match[:,0],kIP.XYZ]
         trainingXYZ=trainingImage[match[:,1],kIP.XYZ]
         matchedXYZDifference=testXYZ-trainingXYZ
-        probableTranslation=houghTransform(matchedXYZDifference)
+        [probMap,probableTranslation]=houghTransformGaussian(matchedXYZDifference)
         
         #XYZtest-XYZtraining-translation
         tMeanMatrix=np.zeros((np.shape(match)[0],3))
         tMeanMatrix[:,:]=probableTranslation
-        XYZT=t-tMeanMatrix
+        XYZT=matchedXYZDifference-tMeanMatrix #erreurrrrrrrrrrrrrrrrr
         
         distance=np.sum(np.absolute(XYZT),axis=1)
         indSort=np.argsort(distance)
         nbMatchKeep=round(np.shape(match)[0]/10)
         outMatch=np.zeros((nbMatchKeep,3))
         outMatch[:,0:2]=match[indSort[0:nbMatchKeep],:]
-        outMatch[:,2]=getMatchProbabilityDistribution(matchedXYZDifference[indSort[0:nbMatchKeep],:])
+        #to improve: try to remove for loop
+        for i in range(nbMatchKeep):
+            translation=tuple((matchedXYZDifference[indSort[i],:]+probMap.shape[0]//2).astype(int))
+            outMatch[i,2]=probMap[translation]
+        #outMatch[:,2]=getMatchProbabilityDistribution(matchedXYZDifference[indSort[0:nbMatchKeep],:])
         distanceTestedMatches.append(outMatch)
         
     return distanceTestedMatches
 
-def voting2(testImage,trainingImages,listMatches,trainingAsegPaths):
+def voting2(testImage,trainingImages,listMatches,listLabels):
 #    maxLabel=0
+    nbTrainingImages=len(trainingImages)
     nbLabel=256
     nbKeyTest=np.shape(testImage)[0]
-    nbTrainingImages=len(trainingImages)
     pMap=np.zeros((nbLabel,nbKeyTest))
+    
     
     for k in range(nbKeyTest):
         descriptorDistances=np.zeros((nbTrainingImages))
@@ -123,14 +148,12 @@ def voting2(testImage,trainingImages,listMatches,trainingAsegPaths):
             if np.sum(matches[:,0]==k)>0:
                 pm[i]=matches[matches[:,0]==k,2]
                 matchedTestedKey=testImage[k,:]
-                matchedTrainingKey=np.squeeze(trainingImage[matches[matches[:,0]==k,0].astype(int),:])
+                idx=matches[matches[:,0]==k,1].astype(int)
+                matchedTrainingKey=np.squeeze(trainingImage[idx,:])
                 #calculate euclidean distance without squaring the result
-                descriptorDistances[i]=np.sum(np.power(matchedTestedKey[kIP.descriptor]-matchedTrainingKey[kIP.descriptor],2))
-                trainingAseg=getAllSiftData.getNiiData(trainingAsegPaths[i])
-                trainingKey=matches[matches[:,0]==k,1].astype(int)
-                XYZ=trainingImage[trainingKey,kIP.XYZ].astype(int)
-                XYZ=XYZ[0]
-                labels[i]=trainingAseg[XYZ[0],XYZ[1],XYZ[2]]
+                descriptorDistances[i]=np.sum(np.power(matchedTestedKey[kIP.descriptor]-matchedTrainingKey[kIP.descriptor],2))               
+                trainingImageLabels=listLabels[i]              
+                labels[i]=trainingImageLabels[matches[:,0]==k]
                 
         tauxTaux=np.power(np.max(descriptorDistances),2)
         for i in range(nbTrainingImages):
@@ -139,17 +162,19 @@ def voting2(testImage,trainingImages,listMatches,trainingAsegPaths):
                
                 label=labels[i].astype(int)
                 pMap[label,k]=pMap[label,k]+keyPointProbability*pm[i]
-                    
-    return pMap
-
-def mostLikelyLabel2(pMap):
+        
+    #get most likely labels      
     mLL=np.zeros(np.shape(pMap)[1])
     for k in range(np.shape(pMap)[1]):
         i=np.argmax(np.squeeze(pMap[:,k]))
         mLL[k]=i
+    return [pMap,mLL]
 
-def doSeg2(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBrainPaths,testBrain,pMap):
-    lMap=np.zeros((256,256,256,256),dtype=np.float16)
+
+def doSeg2(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBrainPaths,testBrain,pMap,listLabels):
+    labelList=np.unique(mLL)
+    nbLabel=labelList.shape[0]
+    lMap=np.zeros((256,256,256,nbLabel),dtype=np.float64)
     
     for k in range(np.shape(testImage)[0]):
         
@@ -159,15 +184,17 @@ def doSeg2(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBr
             #check if k Key is matched with i training Image
             if np.sum(matches[:,0]==k)>0:
                 #get Training seg and label of training keypoint
-                trainingAseg=getAllSiftData.getNiiData(trainingAsegPaths[i])
-                trainingImage=trainingImages[i]
-                trainingKey=matches[matches[:,0]==k,1].astype(int)
-                XYZ=trainingImage[trainingKey,kIP.XYZ][0].astype(int)
-                label=trainingAseg[XYZ[0],XYZ[1],XYZ[2]].astype(int)
+                trainingAseg=getNiiData(trainingAsegPaths[i])
+#                trainingImage=trainingImages[i]
+#                trainingKey=matches[matches[:,0]==k,1].astype(int)
+#                XYZ=trainingImage[trainingKey,kIP.XYZ][0].astype(int)
+#                label=trainingAseg[XYZ[0],XYZ[1],XYZ[2]].astype(int)
+                trainingImageLabels=listLabels[i]
+                label=trainingImageLabels[matches[:,0]==k].astype(int)
                 
                 if mLL[k]==label and label!=0:
                     #get brain map
-                    trainingBrain=getAllSiftData.getNiiData(trainingBrainPaths[i])
+                    trainingBrain=getNiiData(trainingBrainPaths[i])
                     
                     segMap=trainingAseg==label
                     
@@ -184,7 +211,14 @@ def doSeg2(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBr
                     W=c*np.exp(-np.power(iDiff,2)/(2*np.power(v,2)))
                     
                     #pmap [nbLabel,nbKeyTest,nbTrainingImages]
-                    lMap[:,:,:,label]=lMap[:,:,:,label]+W*pMap[label,k]*matches[matches[:,0]==k,2]
+                    labelIndex=labelList==label
+                    toAdd=W*pMap[label,k]*matches[matches[:,0]==k,2]
+                    temp=np.expand_dims(toAdd,axis=3)
+                    lMap[:,:,:,labelIndex]=+temp
+                    print("seg keypoint nb\t",k)
     lMapFinal=np.zeros((256,256,256))              
     lMapFinal=np.argmax(lMap,axis=3)
-    return lMapFinal
+    for i in range(nbLabel):
+        binaryMap=lMapFinal==i
+        lMapFinal[binaryMap]=labelList[i]
+    return [lMapFinal,lMap]

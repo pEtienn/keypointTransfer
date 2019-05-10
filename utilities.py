@@ -1,5 +1,27 @@
-import nibabel as nib
+import numpy as np
 import os
+
+def getStats(a):
+    print("Mean:",np.mean(a))
+    print("Median:",np.median(a))
+    print("Var:",np.var(a))
+    print("Max:",np.max(a))
+    print("Non zero")
+    aa=a>0
+    print("Mean:",np.mean(a[aa]))
+    print("Median:",np.median(a[aa]))
+    print("Var:",np.var(a[aa]))
+    print("Max:",np.max(a[aa]))
+    print("Min:",np.min(a[aa]))
+    print("Nb:",np.sum(aa))
+    print("Total:",np.sum(a))
+    
+def getDC(computed,truth,value):
+    mapC=computed==value
+    mapT=truth==value
+    num=2*np.sum(np.logical_and(mapC,mapT))
+    den=np.sum(mapC)+np.sum(mapT)
+    return num/den
 
 def getDataFromOneFile(filePath):
     
@@ -55,6 +77,4 @@ def getBrainPath(allKeyFiles):
             print("missing file:", s)
     return allBrainPaths
 
-def getNiiData(niiPath):
-    img=nib.load(niiPath)
-    return img.get_fdata()
+

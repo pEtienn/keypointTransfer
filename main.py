@@ -19,28 +19,34 @@ commonPath="S:/ABIDE/preprocessed/"
 #    pickle.dump(allKey,f)
     
 print("program starting")
-nB=10
+nB=20
 i=0
 start=time.time()
-aM=kt.keypointDescriptorMatch(allKey[0],allKey[1:nB])
+allMatches=kt.keypointDescriptorMatch(allKey[0],allKey[1:nB])
 
 
 testImage=allKey[i]
 trainingImages=allKey[i+1:nB]
 
-listMatches=kt.matchDistanceSelection(aM,allKey[0],allKey[1:nB])
+listMatches=kt.matchDistanceSelection(allMatches,testImage,trainingImages)
 allKeyFiles=ut.getListFileKey(commonPath)
 allAsegPaths=ut.getAsegPaths(allKeyFiles)
 trainingAsegPaths=allAsegPaths[i+1:]
 asegTestPath=allAsegPaths[i]
-pMap=kt.voting2(testImage,trainingImages,listMatches,trainingAsegPaths)
-mLL=kt.mostLikelyLabel2(pMap)
+listLabels=kt.getAllLabels(trainingAsegPaths,listMatches,trainingImages)
+pMap,mLL=kt.voting2(testImage,trainingImages,listMatches,listLabels)
+
 
 allBrainPaths=ut.getBrainPath(allKeyFiles)
 trainingBrainPaths=allBrainPaths[i+1:]
-testBrain=ut.getNiiData(allBrainPaths[0])
-asegTest=ut.getNiiData(asegTestPath)
-a=kt.doSeg2(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBrainPaths,testBrain,pMap)
+testBrain=kt.getNiiData(allBrainPaths[0])
+asegTest=kt.getNiiData(asegTestPath)
+segMap,lMap=kt.doSeg2(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBrainPaths,testBrain,pMap,listLabels)
 
 end=time.time()
 print(end-start)
+uniqueLabel=np.unique(mLL)
+truth=kt.getNiiData(allAsegPaths[0])
+for j in range(uniqueLabel.shape[0]):
+    print(ut.getDC(segMap,truth,uniqueLabel[j]))
+    
