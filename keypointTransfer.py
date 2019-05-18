@@ -22,7 +22,6 @@ class keyInformationPosition():
 kIP=keyInformationPosition()
 
 def getNiiData(niiPath):
-    time.sleep(0.1)
     img=nib.load(niiPath)
     return img.get_fdata()
 
@@ -156,6 +155,8 @@ def voting2(testImage,trainingImages,listMatches,listLabels):
                 labels[i]=trainingImageLabels[matches[:,0]==k]
                 
         tauxTaux=np.power(np.max(descriptorDistances),2)
+        if tauxTaux==0:
+             tauxTaux=0.1
         for i in range(nbTrainingImages):
             if tauxTaux>0:
                 keyPointProbability=(1/np.sqrt(2*np.pi*tauxTaux))*np.exp(-descriptorDistances[i]/(2*tauxTaux))
@@ -184,31 +185,28 @@ def doSeg2(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBr
             #check if k Key is matched with i training Image
             if np.sum(matches[:,0]==k)>0:
                 #get Training seg and label of training keypoint
-                trainingAseg=getNiiData(trainingAsegPaths[i])
-#                trainingImage=trainingImages[i]
-#                trainingKey=matches[matches[:,0]==k,1].astype(int)
-#                XYZ=trainingImage[trainingKey,kIP.XYZ][0].astype(int)
-#                label=trainingAseg[XYZ[0],XYZ[1],XYZ[2]].astype(int)
+                
                 trainingImageLabels=listLabels[i]
                 label=trainingImageLabels[matches[:,0]==k].astype(int)
                 
                 if mLL[k]==label and label!=0:
                     #get brain map
                     trainingBrain=getNiiData(trainingBrainPaths[i])
+                    trainingAseg=getNiiData(trainingAsegPaths[i])
                     
                     segMap=trainingAseg==label
                     
-                    iTest=testBrain*segMap
-                    iTraining=trainingBrain*segMap
-                    iDiff=iTest-iTraining
+                    intensityTest=testBrain*segMap
+                    intensityTraining=trainingBrain*segMap
+                    intensityDiff=intensityTest-intensityTraining
 
-                    v=np.var(iDiff) #to confirm
+                    v=np.var(intensityDiff) #to confirm
                     if v==0:
-                        print("pause")
+                        v=1 #to test segmentation on same image
                     c=1/np.sqrt(2*np.pi*v)
                     
                     #a checker
-                    W=c*np.exp(-np.power(iDiff,2)/(2*np.power(v,2)))
+                    W=c*np.exp(-np.power(intensityDiff,2)/(2*np.power(v,2)),where=segMap)
                     
                     #pmap [nbLabel,nbKeyTest,nbTrainingImages]
                     labelIndex=labelList==label

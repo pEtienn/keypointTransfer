@@ -1,5 +1,6 @@
 import numpy as np
 import os
+import matplotlib.pyplot as plt
 
 def getStats(a):
     print("Mean:",np.mean(a))
@@ -44,6 +45,29 @@ def getDataFromOneFile(filePath):
             end=1
     file.close
     return fileData
+
+def generateAllSlices(image,imageName,basePath="S:/siftTransfer/"):
+    fullPath=basePath+imageName+'/'
+    os.mkdir(fullPath)
+    viewNames=['sagittal','axial','coronal']
+    for j in range(3):
+        folder=fullPath+viewNames[j]
+        os.mkdir(folder)
+        for i in range(256):
+            if j==0:
+                plt.imsave(folder+'/'+(str(i)),image[i,:,:],cmap='hot')
+            elif j==1:
+                plt.imsave(folder+'/'+(str(i)),image[:,i,:],cmap='hot')
+            else:
+                plt.imsave(folder+'/'+(str(i)),image[:,:,i],cmap='hot')
+
+def getValuesInIm(im):
+    u=np.unique(im)
+    out=np.zeros((u.shape[0],2))
+    out[:,0]=u
+    for i in range(u.shape[0]):
+        out[out[:,0]==u[i],1]=np.sum(im==u[i])
+    return out
 
 def getListFileKey(commonKeyPath):
     allFolders=os.listdir(commonKeyPath)
