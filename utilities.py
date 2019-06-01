@@ -7,15 +7,17 @@ def getStats(a):
     print("Median:",np.median(a))
     print("Var:",np.var(a))
     print("Max:",np.max(a))
-    print("Non zero")
-    aa=a>0
-    print("Mean:",np.mean(a[aa]))
-    print("Median:",np.median(a[aa]))
-    print("Var:",np.var(a[aa]))
-    print("Max:",np.max(a[aa]))
-    print("Min:",np.min(a[aa]))
-    print("Nb:",np.sum(aa))
-    print("Total:",np.sum(a))
+    
+    if np.sum(a!=0)>0:
+        print("\nNon zero")
+        aa=a!=0
+        print("Mean:",np.mean(a[aa]))
+        print("Median:",np.median(a[aa]))
+        print("Var:",np.var(a[aa]))
+        print("Max:",np.max(a[aa]))
+        print("Min:",np.min(a[aa]))
+        print("Nb:",np.sum(aa))
+        print("Total:",np.sum(a))
     
 def getDC(computed,truth,value):
     mapC=computed==value
@@ -46,20 +48,56 @@ def getDataFromOneFile(filePath):
     file.close
     return fileData
 
-def generateAllSlices(image,imageName,basePath="S:/siftTransfer/"):
+def generateAllSlices(imageTruth,imageGenerated,imageName,basePath="S:/siftTransfer/",ignoreLabelsNotInGenerated=0):
     fullPath=basePath+imageName+'/'
     os.mkdir(fullPath)
     viewNames=['sagittal','axial','coronal']
+    
+    uT=np.unique(imageTruth).astype(int)
+    uG=np.unique(imageGenerated)
+    
+    if ignoreLabelsNotInGenerated==1 and uG.shape[0]>20:
+        for i in range(uT.shape[0]):
+            if np.sum(uG==uT[i])==0:
+                imageTruth[imageTruth==uT[i]]=0
+
+    allUniques=np.unique(np.concatenate((uT,uG)))
+    sU=allUniques.shape[0]
+    for i in range(sU):
+        imageTruth[imageTruth==allUniques[i]]=i
+        imageGenerated[imageGenerated==allUniques[i]]=i
+    
+    if sU<20:
+        cmapName='tab20'
+    else:
+        cmapName='viridis'
+    
+    X=imageTruth.shape[0]
+    Y=imageTruth.shape[0]
+    Z=imageTruth.shape[0]
+    XYZ=[X,Y,Z]
+    canvasSagittal=np.zeros((Y,Z*2))
+    canvasAxial=np.zeros((X,Z*2))
+    canvasCoronal=np.zeros((X,Y*2))
+
+    
     for j in range(3):
         folder=fullPath+viewNames[j]
         os.mkdir(folder)
-        for i in range(256):
+        for i in range(XYZ[j]):
+            
             if j==0:
-                plt.imsave(folder+'/'+(str(i)),image[i,:,:],cmap='hot')
+                canvasSagittal[0:Y,0:Z]=imageTruth[i,:,:]
+                canvasSagittal[0:Y,Z:Z*2]=imageGenerated[i,:,:]
+                plt.imsave(folder+'/'+(str(i)),canvasSagittal,vmin=0,vmax=sU,cmap=cmapName)
             elif j==1:
-                plt.imsave(folder+'/'+(str(i)),image[:,i,:],cmap='hot')
+                canvasAxial[0:X,0:Z]=imageTruth[:,i,:]
+                canvasAxial[0:X,Z:Z*2]=imageGenerated[:,i,:]
+                plt.imsave(folder+'/'+(str(i)),canvasAxial,vmin=0,vmax=sU,cmap=cmapName)
             else:
-                plt.imsave(folder+'/'+(str(i)),image[:,:,i],cmap='hot')
+                canvasCoronal[0:X,0:Y]=imageTruth[:,:,i]
+                canvasCoronal[0:X,Y:Y*2]=imageGenerated[:,:,i]
+                plt.imsave(folder+'/'+(str(i)),canvasCoronal,vmin=0,vmax=sU,cmap=cmapName)
 
 def getValuesInIm(im):
     u=np.unique(im)

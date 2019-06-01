@@ -20,36 +20,49 @@ commonPath="S:/ABIDE/preprocessed/"
 #    pickle.dump(allKey,f)
     
 print("program starting")
-nB=30
-i=0
-start=time.time()
-allMatches=kt.keypointDescriptorMatch(allKey[0],allKey[1:nB])
+testNb=10
+start=0
+end=20
+v1=np.arange(0,len(allKey))
+fArray=v1<0
+idxTrainingBool=np.copy(fArray)
+idxTrainingBool[start:end]=1
+idxTrainingBool[testNb]=0
+idxTrainingArray=v1[idxTrainingBool]
+
+trainingImages=kt.getSubListFromArrayIndexing(allKey,idxTrainingArray)
+
+testImage=allKey[testNb]
 
 
-testImage=allKey[i]
-trainingImages=allKey[i+1:nB]
-
-listMatches=kt.matchDistanceSelection(allMatches,testImage,trainingImages)
-
+#get all necessary data
 allKeyFiles=ut.getListFileKey(commonPath)
 allAsegPaths=ut.getAsegPaths(allKeyFiles)
-trainingAsegPaths=allAsegPaths[i+1:]
-asegTestPath=allAsegPaths[i]
-listLabels=kt.getAllLabels(trainingAsegPaths,listMatches,trainingImages)
-
-pMap,mLL=kt.voting2(testImage,trainingImages,listMatches,listLabels)
-
+trainingAsegPaths=kt.getSubListFromArrayIndexing(allAsegPaths,idxTrainingArray)
+asegTestPath=allAsegPaths[testNb]
 allBrainPaths=ut.getBrainPath(allKeyFiles)
-trainingBrainPaths=allBrainPaths[i+1:]
+trainingBrainPaths=kt.getSubListFromArrayIndexing(allBrainPaths,idxTrainingArray)
 testBrain=kt.getNiiData(allBrainPaths[0])
 asegTest=kt.getNiiData(asegTestPath)
 
-segMap,lMap=kt.doSeg2(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBrainPaths,testBrain,pMap,listLabels)
-
+start=time.time()
+allMatches=kt.keypointDescriptorMatch(testImage,trainingImages)
+listMatches=kt.matchDistanceSelection(allMatches,testImage,trainingImages)
+listLabels=kt.getAllLabels(trainingAsegPaths,listMatches,trainingImages)
+pMap,mLL=kt.voting(testImage,trainingImages,listMatches,listLabels)
+segMap,lMap=kt.doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBrainPaths,testBrain,pMap,listLabels)
 end=time.time()
+
 print(end-start)
 uniqueLabel=np.unique(mLL)
-truth=kt.getNiiData(allAsegPaths[0])
-for j in range(uniqueLabel.shape[0]):
-    print(ut.getDC(segMap,truth,uniqueLabel[j]))
+truth=kt.getNiiData(asegTestPath)
+uTruth=np.unique(truth)
+result=np.zeros((uTruth.shape[0],4))
+result[:,0]=uTruth
+for j in range(uTruth.shape[0]):
+    result[j,1]=np.sum(truth==uTruth[j])
+    result[j,2]=np.sum(segMap==uTruth[j])
+    if result[j,2]>0:
+        result[j,3]=ut.getDC(segMap,truth,uTruth[j])
+        print(result[j,3])
     
