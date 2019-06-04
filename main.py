@@ -6,15 +6,15 @@ import pickle
 
 
 
-picklePath="S:/seg sift transfer/allKeys.pickle"
-with open(picklePath,'rb') as f:
-    allKey=pickle.load(f)
-commonPath="S:/ABIDE/preprocessed/"
+#picklePath="S:/seg sift transfer/allKeys.pickle"
+#with open(picklePath,'rb') as f:
+#    allKey=pickle.load(f)
+commonPath="S:/siftTransfer/ABIDEdata100/"
 
-#allKeyfiles=ut.getListFileKey(commonPath)
-#allKey=[]
-#for file in allKeyfiles:
-#    allKey.append(ut.getDataFromOneFile(file))
+allKeyfiles=ut.getListFileKey(commonPath)
+allKey=[]
+for file in allKeyfiles:
+    allKey.append(ut.getDataFromOneFile(file))
 #    
 #with open('allKeys.pickle','wb') as f:
 #    pickle.dump(allKey,f)

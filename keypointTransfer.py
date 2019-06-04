@@ -3,7 +3,7 @@ from pyflann import *
 from scipy.ndimage import gaussian_filter
 from scipy.ndimage import zoom
 import nibabel as nib
-import time
+import utilities as ut
 
 #COMMENT TEMPLATE
 """
@@ -17,6 +17,8 @@ __list here__
 class keyInformationPosition():
     """
     information locations in SIFT datapoints
+    in an array of SIFT keypoints, row are the number of the keypoints, and colums
+    contains it's characteristics. Use kIP object to access the right characteristics
     """
     scale=3
     XYZ=slice(0,3,1)#np.arange(0,3)
@@ -67,10 +69,17 @@ def getImgLabels(niiPath,keypointXYZs):
 
 def getAllLabels(niiPaths,allMatches,trainingImages):
     """
-    __FUNCTION DESCRIPTION__
+    loop of getImgLabels over all keypoints contained in allMatches
      *** INPUT ***
-    __list here__
+    niipaths: niipaths of all trainingImages in the same order as trainingImages
+    allMatches: list of matches. Same lenght and order as trainingImages.
+                allMatches[x] returns an array of 3 colums
+                testImage key - trainingImage key matched to it - probability
+    trainingImages: list of all trainingImages
+                    contains a list of SIFT key
      *** OUTPUT ***
+     list of labels. Each element of the list contains the output of getImgLabels
+     for one trainingImage's matches
     __list here__
     """
     listLabels=[]
@@ -85,6 +94,16 @@ def getAllLabels(niiPaths,allMatches,trainingImages):
         
         
 def keypointDescriptorMatch(testImage, trainingImages):
+    """
+    for each training image
+        for each keypoint in test image
+            finds the closest keypoint in the training image and approve it or not
+     *** INPUT ***
+    testImage: SIFT keypoint of the test image
+    trainingImages: list containing SIFT keypoints for all trainingImages
+     *** OUTPUT ***
+    list of matches, in the same order as trainingImages
+    """
     #create one matchmap for each training images
     #for each keypoint in testImage
         #find if there is any similar keypoint in the trainingImage
@@ -137,6 +156,17 @@ def houghTransformGaussian(matchedXYZDifference,sigma=3):
     return [probMap, probableDXYZ]
 
 def matchDistanceSelection(allMatches,testImage,trainingImages):
+    """
+    __FUNCTION DESCRIPTION__
+    Use the distance difference between matches to evaluate how likely that match is. 
+    Then trim down the list of matches based on that.
+    *** INPUT ***
+    allMatches: output from keypointDescriptorMatch funciton
+    testImage: SIFT keypoint of the test image
+    trainingImages: list containing SIFT keypoints for all trainingImages
+     *** OUTPUT ***
+    trimmed down list of matches
+    """
     distanceTestedMatches=[]
     for j in range(len(allMatches)):
         matches=allMatches[j]
@@ -164,6 +194,19 @@ def matchDistanceSelection(allMatches,testImage,trainingImages):
     return distanceTestedMatches
 
 def voting(testImage,trainingImages,listMatches,listLabels,nbLabel=256):
+    """
+    Uses match probability and keypoint similarity to estimate the most likeyly
+    label for each keypoint in the test image
+     *** INPUT ***
+    testImage: SIFT keypoint of the test image
+    trainingImages: list containing SIFT keypoints for all trainingImages
+    listMatches: output from matchDistanceSelection funciton
+    listLabels: output of getAllLabels(trainingAsegPaths,listMatches,trainingImages)
+    nbLabel: number of possible labels in the images
+     *** OUTPUT ***
+    pMap: array containing for each test keypoint label combination [nbLabel,nbKeyTest]
+    mLL: most likeyly label for each test keypoint [nbKeyTest]
+    """
 #    maxLabel=0
     nbTrainingImages=len(trainingImages)
     nbKeyTest=np.shape(testImage)[0]
@@ -211,6 +254,23 @@ def voting(testImage,trainingImages,listMatches,listLabels,nbLabel=256):
 
 
 def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBrainPaths,testBrain,pMap,listLabels):
+    """
+    Transfer segmentation from training images to a probability map based on most likely labels, pixel similarity,
+    pMap and the match probability
+     *** INPUT ***
+    testImage: SIFT keypoint of the test image
+    listMatches: output from matchDistanceSelection funciton
+    mLL: most likey labels, output from voting function
+    trainingImages: list containing SIFT keypoints for all trainingImages
+    trainingAsegPaths: list of paths of training images segmentation
+    trainingBrainPaths: list of paths of training images grescale images
+    testBrain: test image in greyscale
+    pMap: output of voting funciton
+    listLabels: output of getAllLabels(trainingAsegPaths,listMatches,trainingImages)
+     *** OUTPUT ***
+    lMap: segmentaiton map (final)
+    lMapProb: label probability for each pixel (for debugging use)
+    """
     labelList=np.unique(mLL)
     nbLabel=labelList.shape[0]
     imageShape=testBrain.shape
@@ -255,7 +315,7 @@ def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBra
                         toAdd=np.exp(W+segMap*np.log(pMap[label,k])+segMap*np.log(matches[matches[:,0]==k,2]),where=segMap)
                         temp=np.expand_dims(toAdd,axis=3)
                         lMapProb[:,:,:,labelIndex]=+temp
-                        print("seg keypoint nb\t",k)
+        print("seg keypoint nb\t",k,'/',testImage.shape[0])
     lMap=np.zeros((256,256,256))  
     maxProb=np.max(lMapProb)  
     lMapProb[lMapProb[:,:,:,0]>0.15*maxProb]=0.15*maxProb    
@@ -266,3 +326,65 @@ def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBra
         binaryMap=lMap==i
         lMap[binaryMap]=labelList[i]
     return [lMap,lMapProb]
+
+def executeTransferKeypointSegmentation(testNb=0,start=0,end=10,commonPath):#="S:/siftTransfer/ABIDEdata100/"
+    """
+    Execute the keypoint transfer segmentation algorithm
+     *** INPUT ***
+     The numbers used for testNb, start and end refers to the position of the 
+     file in a list containing all files found in the each of the 3 folders
+     ind commonPath.
+    testNb: number of the test image
+    start: start of the interval of images used
+    end: end of the interval of image used
+     *** OUTPUT ***
+    segMap: generated segmentation
+    the dice coefficients of the segmentation gets printed
+    """
+    
+    allKeyfiles=ut.getListFileKey(commonPath)
+    allKey=[]
+    for i in range(start,end):
+        allKey.append(ut.getDataFromOneFile(allKeyfiles[i]))
+        
+    print("keys loaded, program starting")
+    
+    #there's probably a better way to generate lists without the test nb
+    v1=np.arange(0,len(allKey))
+    fArray=v1<0
+    idxTrainingBool=np.copy(fArray)
+    idxTrainingBool[start:end]=1
+    idxTrainingBool[testNb]=0
+    idxTrainingArray=v1[idxTrainingBool]
+    trainingImages=getSubListFromArrayIndexing(allKey,idxTrainingArray)
+    testImage=allKey[testNb]
+    
+    
+    #get all necessary data
+    allAsegPaths=ut.getAsegPaths(commonPath)
+    trainingAsegPaths=getSubListFromArrayIndexing(allAsegPaths,idxTrainingArray)
+    asegTestPath=allAsegPaths[testNb]
+    allBrainPaths=ut.getBrainPath(commonPath)
+    trainingBrainPaths=getSubListFromArrayIndexing(allBrainPaths,idxTrainingArray)
+    testBrain=getNiiData(allBrainPaths[0])
+    
+    #do the segmentation
+    allMatches=keypointDescriptorMatch(testImage,trainingImages)
+    listMatches=matchDistanceSelection(allMatches,testImage,trainingImages)
+    listLabels=getAllLabels(trainingAsegPaths,listMatches,trainingImages)
+    pMap,mLL=voting(testImage,trainingImages,listMatches,listLabels)
+    segMap,lMap=doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBrainPaths,testBrain,pMap,listLabels)
+    
+    #evaluate results
+    truth=getNiiData(asegTestPath)
+    uTruth=np.unique(truth)
+    result=np.zeros((uTruth.shape[0],4))
+    result[:,0]=uTruth
+    print('\ndice coefficients')
+    for j in range(uTruth.shape[0]):
+        result[j,1]=np.sum(truth==uTruth[j])
+        result[j,2]=np.sum(segMap==uTruth[j])
+        if result[j,2]>0:
+            result[j,3]=ut.getDC(segMap,truth,uTruth[j])
+            print('label ',uTruth[j],'\tdc:',result[j,3])
+    return segMap

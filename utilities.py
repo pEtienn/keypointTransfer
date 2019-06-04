@@ -2,6 +2,8 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 
+
+
 def getStats(a):
     print("Mean:",np.mean(a))
     print("Median:",np.median(a))
@@ -107,36 +109,19 @@ def getValuesInIm(im):
         out[out[:,0]==u[i],1]=np.sum(im==u[i])
     return out
 
+def listdir_fullpath(d):
+    return [os.path.join(d, f) for f in os.listdir(d)]
+
 def getListFileKey(commonKeyPath):
-    allFolders=os.listdir(commonKeyPath)
-    allKeyFiles=[]
-    for file in allFolders:
-        if os.path.isdir(commonKeyPath+file):
-            proposedPath=commonKeyPath+file+'/'+'mri/brain.key'
-            if os.path.isfile(proposedPath):
-                allKeyFiles.append(proposedPath)
+    allKeyFiles=listdir_fullpath(commonKeyPath+'keypoint')
     return allKeyFiles
 
-def getAsegPaths(allKeyFiles):
-    allNiiPaths=[]
-    for i in range(len(allKeyFiles)):
-        s=allKeyFiles[i].replace('preprocessed','ABIDE_aseg')
-        s=s.replace('brain.key','aseg.nii')
-        if os.path.isfile(s):
-            allNiiPaths.append(s)
-        else:
-            print("missing file:", s)
+def getAsegPaths(commonKeyPath):
+    allNiiPaths=listdir_fullpath(commonKeyPath+'segmentation')
     return allNiiPaths
 
-def getBrainPath(allKeyFiles):
-    allBrainPaths=[]
-    for i in range(len(allKeyFiles)):
-        s=allKeyFiles[i]
-        s=s.replace('brain.key','brain.nii')
-        if os.path.isfile(s):
-            allBrainPaths.append(s)
-        else:
-            print("missing file:", s)
+def getBrainPath(commonKeyPath):
+    allBrainPaths=listdir_fullpath(commonKeyPath+'mri')
     return allBrainPaths
 
 
