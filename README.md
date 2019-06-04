@@ -7,6 +7,7 @@ numpy
 pyflann
 scipy
 nibabel
+matplotlib
 
 Get the data from my google drive
 This data has already been decompressed. It contains 100 patients from the ABIDE dataset.
