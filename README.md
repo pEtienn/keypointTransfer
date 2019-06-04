@@ -15,4 +15,3 @@ This data has already been decompressed. It contains 100 patients from the ABIDE
 Once you cloned the repository you can either 
 -run the keypointTransfer file then execute executeTransferKeypointSegmentation(0,0,10,'yourPath/ABIDEdata100')
 -import keypointTransfer then execute the function
-
