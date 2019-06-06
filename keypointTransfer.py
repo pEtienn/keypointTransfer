@@ -327,7 +327,7 @@ def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBra
         lMap[binaryMap]=labelList[i]
     return [lMap,lMapProb]
 
-def executeTransferKeypointSegmentation(testNb=0,start=0,end=10,commonPath):#="S:/siftTransfer/ABIDEdata100/"
+def executeTransferKeypointSegmentation(commonPath,testNb=0,start=0,end=10):#="S:/siftTransfer/ABIDEdata100/"
     """
     Execute the keypoint transfer segmentation algorithm
      *** INPUT ***
