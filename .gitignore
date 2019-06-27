@@ -125,3 +125,16 @@ executeTransferKeypointSegmentation.py
 main.py
 main.py
 main.py
+
+
+#exclude everything
+ABIDEdata/mri/*
+ABIDEdata/segmentation/*
+ABIDEdata/keypoint/*
+Outputs/*
+
+#exception to the rule
+!ABIDEdata/mri/.gitkeep
+!ABIDEdata/segmentation/.gitkeep
+!ABIDEdata/keypoint/.gitkeep
+!Outputs/.gitkeep

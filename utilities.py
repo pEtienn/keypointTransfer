@@ -28,7 +28,7 @@ def getDC(computed,truth,value):
     den=np.sum(mapC)+np.sum(mapT)
     return num/den
 
-def getDataFromOneFile(filePath):
+def getKeypointFromOneFile(filePath):
     
     file= open (filePath,'r')
     #skip
@@ -50,9 +50,8 @@ def getDataFromOneFile(filePath):
     file.close
     return fileData
 
-def generateAllSlices(imageTruth,imageGenerated,imageName,basePath="S:/siftTransfer/",ignoreLabelsNotInGenerated=0):
-    fullPath=basePath+imageName+'/'
-    os.mkdir(fullPath)
+def generateAllSlices(imageTruth,imageGenerated,folderPath,ignoreLabelsNotInGenerated=0):
+    os.mkdir(folderPath)
     viewNames=['sagittal','axial','coronal']
     
     uT=np.unique(imageTruth).astype(int)
@@ -84,22 +83,22 @@ def generateAllSlices(imageTruth,imageGenerated,imageName,basePath="S:/siftTrans
 
     
     for j in range(3):
-        folder=fullPath+viewNames[j]
+        folder=os.path.join(folderPath,viewNames[j])
         os.mkdir(folder)
         for i in range(XYZ[j]):
             
             if j==0:
                 canvasSagittal[0:Y,0:Z]=imageTruth[i,:,:]
                 canvasSagittal[0:Y,Z:Z*2]=imageGenerated[i,:,:]
-                plt.imsave(folder+'/'+(str(i)),canvasSagittal,vmin=0,vmax=sU,cmap=cmapName)
+                plt.imsave(os.path.join(folder,(str(i))),canvasSagittal,vmin=0,vmax=sU,cmap=cmapName)
             elif j==1:
                 canvasAxial[0:X,0:Z]=imageTruth[:,i,:]
                 canvasAxial[0:X,Z:Z*2]=imageGenerated[:,i,:]
-                plt.imsave(folder+'/'+(str(i)),canvasAxial,vmin=0,vmax=sU,cmap=cmapName)
+                plt.imsave(os.path.join(folder,(str(i))),canvasAxial,vmin=0,vmax=sU,cmap=cmapName)
             else:
                 canvasCoronal[0:X,0:Y]=imageTruth[:,:,i]
                 canvasCoronal[0:X,Y:Y*2]=imageGenerated[:,:,i]
-                plt.imsave(folder+'/'+(str(i)),canvasCoronal,vmin=0,vmax=sU,cmap=cmapName)
+                plt.imsave(os.path.join(folder,(str(i))),canvasCoronal,vmin=0,vmax=sU,cmap=cmapName)
 
 def getValuesInIm(im):
     u=np.unique(im)
@@ -113,15 +112,18 @@ def listdir_fullpath(d):
     return [os.path.join(d, f) for f in os.listdir(d)]
 
 def getListFileKey(commonKeyPath):
-    allKeyFiles=listdir_fullpath(commonKeyPath+'keypoint')
-    return allKeyFiles
+    allKeyFiles=listdir_fullpath(os.path.join(commonKeyPath,'keypoint'))
+    withoutGitKeep=[x for x in allKeyFiles if '.gitkeep' not in x] #called a list comprehension
+    return withoutGitKeep
 
 def getAsegPaths(commonKeyPath):
-    allNiiPaths=listdir_fullpath(commonKeyPath+'segmentation')
-    return allNiiPaths
+    allNiiPaths=listdir_fullpath(os.path.join(commonKeyPath,'segmentation'))
+    withoutGitKeep=[x for x in allNiiPaths if '.gitkeep' not in x] #called a list comprehension
+    return withoutGitKeep
 
 def getBrainPath(commonKeyPath):
-    allBrainPaths=listdir_fullpath(commonKeyPath+'mri')
-    return allBrainPaths
+    allBrainPaths=listdir_fullpath(os.path.join(commonKeyPath,'mri'))
+    withoutGitKeep=[x for x in allBrainPaths if '.gitkeep' not in x] #called a list comprehension
+    return withoutGitKeep
 
 
