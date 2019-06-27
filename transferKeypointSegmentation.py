@@ -26,9 +26,9 @@ the dice coefficients of the segmentation gets printed
 """
 
 parser = argparse.ArgumentParser(description='Execute the keypoint transfer segmentation algorithm')
-parser.add_argument('--testFile',help='Name of the test file',default='Caltech_0051456')
-parser.add_argument('--outputFile',help='Name of the output image file',default='newOutput')
-parser.add_argument('--trainingInterval',type=int,nargs=2,default=[0 ,10])
+parser.add_argument('--testFile',help='Name of the test file, default:Caltech_0051456',default='Caltech_0051456')
+parser.add_argument('--outputFile',help='Name of the output image file, default:newOutput',default='newOutput')
+parser.add_argument('--trainingInterval',help='Range of the files taken in the ABIDEdata folder to use for training, default: 0 10', type=int,nargs=2,default=[0 ,10])
 listArg=parser.parse_args()
 [start,end]=listArg.trainingInterval
 commonPath=os.path.join(os.path.dirname(os.path.realpath(__file__)),'ABIDEdata')
