@@ -251,9 +251,27 @@ def voting(testImage,trainingImages,listMatches,listLabels,nbLabel=256):
         i=np.argmax(np.squeeze(pMap[:,k]))
         mLL[k]=i
     return [pMap,mLL]
+    
+def createDistanceArray(shape,xyz):
+    s=np.array([shape[0],shape[1],shape[2],3])
+    pos=np.zeros(s)
+    for j in range(s[0]):
+        pos[j,:,:,0]=j
+    for j in range(s[1]):
+        pos[:,j,:,1]=j
+    for j in range(s[2]):
+        pos[:,:,j,2]=j
+    [x,y,z]=np.array([2,3,4])
+    pos1=pos-[x,y,z]
+    pos1=np.power(pos1,2)
+    
+    squared=np.sqrt(pos1)
+    distance=np.sum(squared,axis=3)
+    distance=np.sqrt(distance)
+    distance=distance.astype(int)
+    return distance
 
-
-def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBrainPaths,testBrain,pMap,listLabels):
+def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBrainPaths,testBrain,pMap,listLabels,outputInfoFile):
     """
     Transfer segmentation from training images to a probability map based on most likely labels, pixel similarity,
     pMap and the match probability
@@ -271,11 +289,14 @@ def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBra
     lMap: segmentaiton map (final)
     lMapProb: label probability for each pixel (for debugging use)
     """
+    f=outputInfoFile
     labelList=np.unique(mLL)
     nbLabel=labelList.shape[0]
     imageShape=testBrain.shape
     lMapProb=np.zeros((256,256,256,nbLabel),dtype=np.float64)
-    
+    maxDist=np.max(np.shape(lMapProb))
+    distSave=np.zeros((maxDist,2))
+    listOfKeyTransfered=np.full((testImage.shape[0],3),-1)
     for k in range(np.shape(testImage)[0]):
         
         for i in range(np.shape(listMatches)[0]):
@@ -283,6 +304,7 @@ def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBra
             
             #check if k Key is matched with i training Image
             if np.sum(matches[:,0]==k)>0:
+                trainingKeyIndex=int(matches[matches[:,0]==k,1])
                 #get Training seg and label of training keypoint
                 
                 trainingImageLabels=listLabels[i]
@@ -290,6 +312,7 @@ def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBra
                 
                 if mLL[k]==label and label!=0:
                     #get brain map
+                    listOfKeyTransfered[k,:]=testImage[k,0:3]
                     trainingBrain=getNiiData(trainingBrainPaths[i])
                     trainingAseg=getNiiData(trainingAsegPaths[i])
                     
@@ -314,7 +337,25 @@ def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBra
 #                        toAdd=W*pMap[label,k]*matches[matches[:,0]==k,2]
                         toAdd=np.exp(W+segMap*np.log(pMap[label,k])+segMap*np.log(matches[matches[:,0]==k,2]),where=segMap)
                         temp=np.expand_dims(toAdd,axis=3)
-                        lMapProb[:,:,:,labelIndex]=+temp
+                        trainingImage=trainingImages[i]
+                        
+                        
+                        
+                        #calculating translation
+                        [xT,yT,zT]=trainingImage[trainingKeyIndex,0:3].astype(int)
+                        [x,y,z]=testImage[k,0:3].astype(int)
+                        [dx,dy,dz]=np.array([x,y,z])-np.array([xT,yT,zT])
+                        [sx,sy,sz]=np.max(np.array([[0-dx,0-dy,0-dz],[0,0,0]]),axis=0)
+                        [ex,ey,ez]=np.min(np.array([[toAdd.shape[0],toAdd.shape[1],toAdd.shape[2]],[toAdd.shape[0]-dx,toAdd.shape[1]-dy,toAdd.shape[2]-dz]]),axis=0)
+                        
+                        #measuring intensity in function of distance
+                        distArray=createDistanceArray(toAdd.shape,[xT,yT,zT])
+                        for j in range(maxDist):
+                            n=np.sum(distArray==j)
+                            if n>0:
+                                distSave[j,0]=+np.sum(temp[distArray==j])
+                                distSave[j,1]=+n
+                        lMapProb[sx+dx:ex+dx,sy+dy:ey+dy,sz+dz:ez+dz,labelIndex]=+temp[sx:ex,sy:ey,sz:ez]
         print("seg keypoint nb\t",k,'/',testImage.shape[0])
     lMap=np.zeros((256,256,256))  
     maxProb=np.max(lMapProb)  
@@ -325,66 +366,13 @@ def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBra
     for i in range(nbLabel):
         binaryMap=lMap==i
         lMap[binaryMap]=labelList[i]
-    return [lMap,lMapProb]
-
-def executeTransferKeypointSegmentation(commonPath,testNb=0,start=0,end=10):#="S:/siftTransfer/ABIDEdata100/"
-    """
-    Execute the keypoint transfer segmentation algorithm
-     *** INPUT ***
-     The numbers used for testNb, start and end refers to the position of the 
-     file in a list containing all files found in the each of the 3 folders
-     ind commonPath.
-    testNb: number of the test image
-    start: start of the interval of images used
-    end: end of the interval of image used
-     *** OUTPUT ***
-    segMap: generated segmentation
-    the dice coefficients of the segmentation gets printed
-    """
     
-    allKeyfiles=ut.getListFileKey(commonPath)
-    allKey=[]
-    for i in range(start,end):
-        allKey.append(ut.getDataFromOneFile(allKeyfiles[i]))
-        
-    print("keys loaded, program starting")
+    #print distance
+    distAvg=np.zeros((maxDist))
+    distAvg=distSave[:,0]/distSave[:,1]
+    f.write("distance\taverage intensity\n")
+    for j in range(maxDist):
+        s=str(j)+'\t\t'+str(distSave[j,0])+'\t'+str(distSave[j,1])+'\n'
+        f.write(s)
     
-    #there's probably a better way to generate lists without the test nb
-    v1=np.arange(0,len(allKey))
-    fArray=v1<0
-    idxTrainingBool=np.copy(fArray)
-    idxTrainingBool[start:end]=1
-    idxTrainingBool[testNb]=0
-    idxTrainingArray=v1[idxTrainingBool]
-    trainingImages=getSubListFromArrayIndexing(allKey,idxTrainingArray)
-    testImage=allKey[testNb]
-    
-    
-    #get all necessary data
-    allAsegPaths=ut.getAsegPaths(commonPath)
-    trainingAsegPaths=getSubListFromArrayIndexing(allAsegPaths,idxTrainingArray)
-    asegTestPath=allAsegPaths[testNb]
-    allBrainPaths=ut.getBrainPath(commonPath)
-    trainingBrainPaths=getSubListFromArrayIndexing(allBrainPaths,idxTrainingArray)
-    testBrain=getNiiData(allBrainPaths[0])
-    
-    #do the segmentation
-    allMatches=keypointDescriptorMatch(testImage,trainingImages)
-    listMatches=matchDistanceSelection(allMatches,testImage,trainingImages)
-    listLabels=getAllLabels(trainingAsegPaths,listMatches,trainingImages)
-    pMap,mLL=voting(testImage,trainingImages,listMatches,listLabels)
-    segMap,lMap=doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBrainPaths,testBrain,pMap,listLabels)
-    
-    #evaluate results
-    truth=getNiiData(asegTestPath)
-    uTruth=np.unique(truth)
-    result=np.zeros((uTruth.shape[0],4))
-    result[:,0]=uTruth
-    print('\ndice coefficients')
-    for j in range(uTruth.shape[0]):
-        result[j,1]=np.sum(truth==uTruth[j])
-        result[j,2]=np.sum(segMap==uTruth[j])
-        if result[j,2]>0:
-            result[j,3]=ut.getDC(segMap,truth,uTruth[j])
-            print('label ',uTruth[j],'\tdc:',result[j,3])
-    return segMap
+    return [lMap,lMapProb,listOfKeyTransfered[listOfKeyTransfered[:,0]>-1]]

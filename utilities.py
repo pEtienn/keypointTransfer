@@ -1,9 +1,37 @@
 import numpy as np
 import os
 import matplotlib.pyplot as plt
+from PIL import Image
+from scipy.ndimage import gaussian_filter
+from matplotlib import cm
+import matplotlib as mpl
+import shutil
+import time
+import cv2
 
 
+def dilate3D(im,kernel): 
+    kSize=kernel.shape[0]
+    kSm=int((kSize-1)/2)
+    bufferedIm=np.zeros((im.shape[0]+(kSize-1),im.shape[1]+(kSize-1),im.shape[2]+(kSize-1)))
+    index=slice(kSm,bufferedIm.shape[0]-kSm)
+    bufferedIm[index,index,index]=im
+    
+    for x in range(im.shape[0]):
+        for y in range(im.shape[1]):
+            for z in range(im.shape[2]):
+                temp=bufferedIm[x:x+2*kSm+1,y:y+2*kSm+1,z:z+2*kSm+1]
+                im[x,y,z]=np.max(np.multiply(temp,kernel))
+    return im
 
+def createCrossKernel(value,size):
+    k=np.zeros((size,size,size))
+    c=int((size-1)/2)
+    k[0:size,c,c]=value
+    k[c,0:size,c]=value
+    k[c,c,0:size]=value
+    return k
+        
 def getStats(a):
     print("Mean:",np.mean(a))
     print("Median:",np.median(a))
@@ -50,8 +78,8 @@ def getKeypointFromOneFile(filePath):
     file.close
     return fileData
 
-def generateAllSlices(imageTruth,imageGenerated,folderPath,ignoreLabelsNotInGenerated=0):
-    os.mkdir(folderPath)
+def generateAllSlices(imageTruth,imageGenerated,folderPath,listOfKeypointCoordinate,ignoreLabelsNotInGenerated=0,):
+    
     viewNames=['sagittal','axial','coronal']
     
     uT=np.unique(imageTruth).astype(int)
@@ -80,7 +108,34 @@ def generateAllSlices(imageTruth,imageGenerated,folderPath,ignoreLabelsNotInGene
     canvasSagittal=np.zeros((Y,Z*2))
     canvasAxial=np.zeros((X,Z*2))
     canvasCoronal=np.zeros((X,Y*2))
-
+    
+    #generate map of keypoints transfered
+    crossSize=3
+    keypointMatrix=np.zeros((256,256,256))
+    for i in range(listOfKeypointCoordinate.shape[0]):
+        [x,y,z]=listOfKeypointCoordinate[i,:]
+        x=x.astype(int)
+        y=y.astype(int)
+        z=z.astype(int)
+        keypointMatrix[x,y,z]=1
+        for i in range(-(crossSize-1),(crossSize)):
+            keypointMatrix[x+i,y,z]=1
+            keypointMatrix[x,y+i,z]=1
+            keypointMatrix[x,y,z+i]=1
+        
+#    k=createCrossKernel(1,5)
+#    keypointMatrix=dilate3D(keypointMatrix,k)
+    
+    
+    norm=mpl.colors.Normalize(vmin=0,vmax=sU)
+    cmap=cmapName
+    SMI=cm.ScalarMappable(norm=norm,cmap=cmap)
+    
+    norm1=mpl.colors.Normalize(vmin=0,vmax=1)
+    cmap1=cm.hsv
+    SMR=cm.ScalarMappable(norm=norm1,cmap=cmap1)
+    
+    
     
     for j in range(3):
         folder=os.path.join(folderPath,viewNames[j])
@@ -90,15 +145,32 @@ def generateAllSlices(imageTruth,imageGenerated,folderPath,ignoreLabelsNotInGene
             if j==0:
                 canvasSagittal[0:Y,0:Z]=imageTruth[i,:,:]
                 canvasSagittal[0:Y,Z:Z*2]=imageGenerated[i,:,:]
-                plt.imsave(os.path.join(folder,(str(i))),canvasSagittal,vmin=0,vmax=sU,cmap=cmapName)
-            elif j==1:
-                canvasAxial[0:X,0:Z]=imageTruth[:,i,:]
-                canvasAxial[0:X,Z:Z*2]=imageGenerated[:,i,:]
-                plt.imsave(os.path.join(folder,(str(i))),canvasAxial,vmin=0,vmax=sU,cmap=cmapName)
-            else:
-                canvasCoronal[0:X,0:Y]=imageTruth[:,:,i]
-                canvasCoronal[0:X,Y:Y*2]=imageGenerated[:,:,i]
-                plt.imsave(os.path.join(folder,(str(i))),canvasCoronal,vmin=0,vmax=sU,cmap=cmapName)
+#                plt.imsave(os.path.join(folder,(str(i))),canvasSagittal,vmin=0,vmax=sU,cmap=cmapName)
+                tempIm=np.uint8(SMI.to_rgba(canvasSagittal)*255)
+                im = Image.fromarray(tempIm)
+                if i==120:
+                    print('canvas')
+                    getStats(canvasSagittal)
+                    print('Ucanvas',np.unique(canvasSagittal))
+                    print('Uim',np.unique(tempIm))               
+                    sPath=os.path.join(folder,(str(i))+'.png')
+                    im.save(sPath)
+                    print('mega')
+
+                imToPaste=np.uint8(SMR.to_rgba(keypointMatrix[i,:,:])*255)
+                mask = Image.fromarray(np.uint8(255*(keypointMatrix[i,:,:]>0)))
+                im.paste(Image.fromarray(imToPaste),(0,0),mask)
+                sPath=os.path.join(folder,(str(i))+'.png')
+
+                im.save(sPath)
+#            elif j==1:
+#                canvasAxial[0:X,0:Z]=imageTruth[:,i,:]
+#                canvasAxial[0:X,Z:Z*2]=imageGenerated[:,i,:]
+#                plt.imsave(os.path.join(folder,(str(i))),canvasAxial,vmin=0,vmax=sU,cmap=cmapName)
+#            else:
+#                canvasCoronal[0:X,0:Y]=imageTruth[:,:,i]
+#                canvasCoronal[0:X,Y:Y*2]=imageGenerated[:,:,i]
+#                plt.imsave(os.path.join(folder,(str(i))),canvasCoronal,vmin=0,vmax=sU,cmap=cmapName)
 
 def getValuesInIm(im):
     u=np.unique(im)

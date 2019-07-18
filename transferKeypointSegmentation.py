@@ -10,6 +10,7 @@ import keypointTransfer as kt
 import utilities as ut
 import argparse
 import os
+import shutil
 
 """
 Execute the keypoint transfer segmentation algorithm
@@ -24,7 +25,8 @@ end: end of the interval of image used
 segMap: generated segmentation
 the dice coefficients of the segmentation gets printed
 """
-
+if f:
+    f.close()
 parser = argparse.ArgumentParser(description='Execute the keypoint transfer segmentation algorithm')
 parser.add_argument('--testFile',help='Name of the test file, default:Caltech_0051456',default='Caltech_0051456')
 parser.add_argument('--outputFile',help='Name of the output image file, default:newOutput',default='newOutput')
@@ -33,11 +35,12 @@ listArg=parser.parse_args()
 [start,end]=listArg.trainingInterval
 commonPath=os.path.join(os.path.dirname(os.path.realpath(__file__)),'ABIDEdata')
 outputPath=os.path.join(os.path.dirname(os.path.realpath(__file__)),'Outputs',listArg.outputFile)
-if os.path.isdir(outputPath):
-    print('Output folder already exists, aborting program')
-    exit()
-    
+if os.path.isdir(outputPath): #uT.generateAllSlices expects a non-existing folder path
+        shutil.rmtree(outputPath, ignore_errors=False, onerror=None)
 print(start,end)
+os.mkdir(outputPath)
+f=open(os.path.join(outputPath,"outputInfo.txt"),"w+")
+
 #print(listArg.outputFile)
 #print(start,end)
 #print(listArg.trainingPath)
@@ -74,7 +77,7 @@ allMatches=kt.keypointDescriptorMatch(testImage,trainingImages)
 listMatches=kt.matchDistanceSelection(allMatches,testImage,trainingImages)
 listLabels=kt.getAllLabels(trainingAsegPaths,listMatches,trainingImages)
 pMap,mLL=kt.voting(testImage,trainingImages,listMatches,listLabels)
-segMap,lMap=kt.doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBrainPaths,testBrain,pMap,listLabels)
+segMap,lMap,tabOfKeyTransfered=kt.doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBrainPaths,testBrain,pMap,listLabels,f)
 
 #evaluate results
 
@@ -89,4 +92,6 @@ for j in range(uTruth.shape[0]):
         result[j,3]=ut.getDC(segMap,truth,uTruth[j])
         print('label ',uTruth[j],'\tdc:',result[j,3])
         
-ut.generateAllSlices(truth,segMap,outputPath,0)
+ut.generateAllSlices(truth,segMap,outputPath,tabOfKeyTransfered,0)
+f=open(os.path.join(outputPath,"outputInfo.txt"),"w+")
+f.close()
