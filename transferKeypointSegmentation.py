@@ -31,6 +31,7 @@ parser = argparse.ArgumentParser(description='Execute the keypoint transfer segm
 parser.add_argument('--testFile',help='Name of the test file, default:Caltech_0051456',default='Caltech_0051456')
 parser.add_argument('--outputFile',help='Name of the output image file, default:newOutput',default='newOutput')
 parser.add_argument('--trainingInterval',help='Range of the files taken in the ABIDEdata folder to use for training, default: 0 10', type=int,nargs=2,default=[0 ,10])
+parser.add_argument('--generateDistanceInfo',help='Test feature, default:0',type=int,default='0')
 listArg=parser.parse_args()
 [start,end]=listArg.trainingInterval
 commonPath=os.path.join(os.path.dirname(os.path.realpath(__file__)),'ABIDEdata')
@@ -77,7 +78,7 @@ allMatches=kt.keypointDescriptorMatch(testImage,trainingImages)
 listMatches=kt.matchDistanceSelection(allMatches,testImage,trainingImages)
 listLabels=kt.getAllLabels(trainingAsegPaths,listMatches,trainingImages)
 pMap,mLL=kt.voting(testImage,trainingImages,listMatches,listLabels)
-segMap,lMap,tabOfKeyTransfered=kt.doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBrainPaths,testBrain,pMap,listLabels,f)
+segMap,lMap,tabOfKeyTransfered=kt.doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBrainPaths,testBrain,pMap,listLabels,f,listArg.generateDistanceInfo)
 
 #evaluate results
 

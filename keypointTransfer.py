@@ -261,17 +261,14 @@ def createDistanceArray(shape,xyz):
         pos[:,j,:,1]=j
     for j in range(s[2]):
         pos[:,:,j,2]=j
-    [x,y,z]=np.array([2,3,4])
-    pos1=pos-[x,y,z]
+    pos1=pos-xyz
     pos1=np.power(pos1,2)
-    
-    squared=np.sqrt(pos1)
-    distance=np.sum(squared,axis=3)
+    distance=np.sum(pos1,axis=3)
     distance=np.sqrt(distance)
     distance=distance.astype(int)
     return distance
 
-def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBrainPaths,testBrain,pMap,listLabels,outputInfoFile):
+def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBrainPaths,testBrain,pMap,listLabels,outputInfoFile,generateDistanceInfo):
     """
     Transfer segmentation from training images to a probability map based on most likely labels, pixel similarity,
     pMap and the match probability
@@ -348,13 +345,15 @@ def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBra
                         [sx,sy,sz]=np.max(np.array([[0-dx,0-dy,0-dz],[0,0,0]]),axis=0)
                         [ex,ey,ez]=np.min(np.array([[toAdd.shape[0],toAdd.shape[1],toAdd.shape[2]],[toAdd.shape[0]-dx,toAdd.shape[1]-dy,toAdd.shape[2]-dz]]),axis=0)
                         
-                        #measuring intensity in function of distance
-                        distArray=createDistanceArray(toAdd.shape,[xT,yT,zT])
-                        for j in range(maxDist):
-                            n=np.sum(distArray==j)
-                            if n>0:
-                                distSave[j,0]=+np.sum(temp[distArray==j])
-                                distSave[j,1]=+n
+                        if generateDistanceInfo==1:
+                            #measuring intensity in function of distance
+                            distArray=createDistanceArray(toAdd.shape,[xT,yT,zT])
+                            for j in range(maxDist):
+                                n=np.sum(distArray==j)
+                                if n>0:
+                                    distSave[j,0]=+np.sum(temp[distArray==j])
+                                    distSave[j,1]=+n  
+                                
                         lMapProb[sx+dx:ex+dx,sy+dy:ey+dy,sz+dz:ez+dz,labelIndex]=+temp[sx:ex,sy:ey,sz:ez]
         print("seg keypoint nb\t",k,'/',testImage.shape[0])
     lMap=np.zeros((256,256,256))  
@@ -368,11 +367,21 @@ def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBra
         lMap[binaryMap]=labelList[i]
     
     #print distance
-    distAvg=np.zeros((maxDist))
-    distAvg=distSave[:,0]/distSave[:,1]
-    f.write("distance\taverage intensity\n")
-    for j in range(maxDist):
-        s=str(j)+'\t\t'+str(distSave[j,0])+'\t'+str(distSave[j,1])+'\n'
-        f.write(s)
+    if generateDistanceInfo==1:
+        f.write("distance\taverage intensity\n")
+        for j in range(maxDist):
+            s=str(j)+'\t\t'+str(distSave[j,0])+'\t'+str(distSave[j,1])+'\n'
+            f.write(s)
     
     return [lMap,lMapProb,listOfKeyTransfered[listOfKeyTransfered[:,0]>-1]]
+
+
+#def printAllImages(allAsegPath,outputPath,allKeyFiles,sliceNumber):
+#    
+#    for i in allAsegPath:
+#        seg=getNiiData(i)
+#        keypoints=allKeyFiles[i]
+#        listOfKeypointCoordinate=keypoint[:,0:3]
+#        patientName=
+#        ut.generateSagSliceComp(seg,outputPath,listOfKeypointCoordinate,sliceNumber,patientName):
+        

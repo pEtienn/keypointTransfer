@@ -78,7 +78,14 @@ def getKeypointFromOneFile(filePath):
     file.close
     return fileData
 
-def generateAllSlices(imageTruth,imageGenerated,folderPath,listOfKeypointCoordinate,ignoreLabelsNotInGenerated=0,):
+def generateColorBar(height,width,nbValues):
+    t=nbValues/height
+    mat=np.zeros((height,width))
+    for i in range(height):
+        mat[height-i-1,:]=t*i
+    return mat.astype(int)
+    
+def generateAllSlices(imageTruth,imageGenerated,folderPath,listOfKeypointCoordinate,ignoreLabelsNotInGenerated=0):
     
     viewNames=['sagittal','axial','coronal']
     
@@ -122,11 +129,8 @@ def generateAllSlices(imageTruth,imageGenerated,folderPath,listOfKeypointCoordin
             keypointMatrix[x+i,y,z]=1
             keypointMatrix[x,y+i,z]=1
             keypointMatrix[x,y,z+i]=1
-        
-#    k=createCrossKernel(1,5)
-#    keypointMatrix=dilate3D(keypointMatrix,k)
-    
-    
+
+    #colormap variables
     norm=mpl.colors.Normalize(vmin=0,vmax=sU)
     cmap=cmapName
     SMI=cm.ScalarMappable(norm=norm,cmap=cmap)
@@ -135,28 +139,21 @@ def generateAllSlices(imageTruth,imageGenerated,folderPath,listOfKeypointCoordin
     cmap1=cm.hsv
     SMR=cm.ScalarMappable(norm=norm1,cmap=cmap1)
     
-    
-    
     for j in range(3):
         folder=os.path.join(folderPath,viewNames[j])
         os.mkdir(folder)
+
         for i in range(XYZ[j]):
             
             if j==0:
+                width=10
+                colorBar=generateColorBar(Y,width,sU)
                 canvasSagittal[0:Y,0:Z]=imageTruth[i,:,:]
                 canvasSagittal[0:Y,Z:Z*2]=imageGenerated[i,:,:]
+                canvasSagittal[0:Y,(Z*2-width):Z*2]=colorBar
 #                plt.imsave(os.path.join(folder,(str(i))),canvasSagittal,vmin=0,vmax=sU,cmap=cmapName)
                 tempIm=np.uint8(SMI.to_rgba(canvasSagittal)*255)
                 im = Image.fromarray(tempIm)
-                if i==120:
-                    print('canvas')
-                    getStats(canvasSagittal)
-                    print('Ucanvas',np.unique(canvasSagittal))
-                    print('Uim',np.unique(tempIm))               
-                    sPath=os.path.join(folder,(str(i))+'.png')
-                    im.save(sPath)
-                    print('mega')
-
                 imToPaste=np.uint8(SMR.to_rgba(keypointMatrix[i,:,:])*255)
                 mask = Image.fromarray(np.uint8(255*(keypointMatrix[i,:,:]>0)))
                 im.paste(Image.fromarray(imToPaste),(0,0),mask)
@@ -172,6 +169,63 @@ def generateAllSlices(imageTruth,imageGenerated,folderPath,listOfKeypointCoordin
 #                canvasCoronal[0:X,Y:Y*2]=imageGenerated[:,:,i]
 #                plt.imsave(os.path.join(folder,(str(i))),canvasCoronal,vmin=0,vmax=sU,cmap=cmapName)
 
+def generateSagSliceComp(imageGenerated,folderPath,listOfKeypointCoordinate,sliceNumber,patientName):
+    viewNames=['sagittal','axial','coronal']
+    
+    uG=np.unique(imageGenerated)
+
+    allUniques=np.unique(uG)
+    sU=allUniques.shape[0]
+    for i in range(sU):
+        imageGenerated[imageGenerated==allUniques[i]]=i
+    
+    if sU<20:
+        cmapName='tab20'
+    else:
+        cmapName='viridis'
+    
+    X=imageGenerated.shape[0]
+    Y=imageGenerated.shape[0]
+    Z=imageGenerated.shape[0]
+    canvasSagittal=np.zeros((Y,Z))
+    
+    #generate map of keypoints transfered
+    crossSize=3
+    keypointMatrix=np.zeros((256,256,256))
+    for i in range(listOfKeypointCoordinate.shape[0]):
+        [x,y,z]=listOfKeypointCoordinate[i,:]
+        x=x.astype(int)
+        y=y.astype(int)
+        z=z.astype(int)
+        keypointMatrix[x,y,z]=1
+        for i in range(-(crossSize-1),(crossSize)):
+            keypointMatrix[x+i,y,z]=1
+            keypointMatrix[x,y+i,z]=1
+            keypointMatrix[x,y,z+i]=1
+        
+    
+    norm=mpl.colors.Normalize(vmin=0,vmax=sU)
+    cmap=cmapName
+    SMI=cm.ScalarMappable(norm=norm,cmap=cmap)
+    
+    norm1=mpl.colors.Normalize(vmin=0,vmax=1)
+    cmap1=cm.hsv
+    SMR=cm.ScalarMappable(norm=norm1,cmap=cmap1)
+    
+    folder=os.path.join(folderPath,viewNames[0])
+    os.mkdir(folder)
+
+
+    canvasSagittal[0:Y,0:Z]=imageGenerated[sliceNumber,:,:]
+    tempIm=np.uint8(SMI.to_rgba(canvasSagittal)*255)
+    im = Image.fromarray(tempIm)
+    imToPaste=np.uint8(SMR.to_rgba(keypointMatrix[sliceNumber,:,:])*255)
+    mask = Image.fromarray(np.uint8(255*(keypointMatrix[sliceNumber,:,:]>0)))
+    im.paste(Image.fromarray(imToPaste),(0,0),mask)
+    sPath=os.path.join(folder,patientName+'.png')
+
+    im.save(sPath)
+    
 def getValuesInIm(im):
     u=np.unique(im)
     out=np.zeros((u.shape[0],2))
@@ -197,5 +251,8 @@ def getBrainPath(commonKeyPath):
     allBrainPaths=listdir_fullpath(os.path.join(commonKeyPath,'mri'))
     withoutGitKeep=[x for x in allBrainPaths if '.gitkeep' not in x] #called a list comprehension
     return withoutGitKeep
+
+
+        
 
 
