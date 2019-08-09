@@ -7,7 +7,6 @@ from matplotlib import cm
 import matplotlib as mpl
 import shutil
 import time
-import cv2
 
 
 def dilate3D(im,kernel): 
@@ -92,12 +91,13 @@ def generateAllSlices(imageTruth,imageGenerated,folderPath,listOfKeypointCoordin
     uT=np.unique(imageTruth).astype(int)
     uG=np.unique(imageGenerated)
     
-    if ignoreLabelsNotInGenerated==1 and uG.shape[0]>20:
+    if ignoreLabelsNotInGenerated==1 and uT.shape[0]>=20:
         for i in range(uT.shape[0]):
             if np.sum(uG==uT[i])==0:
                 imageTruth[imageTruth==uT[i]]=0
-
-    allUniques=np.unique(np.concatenate((uT,uG)))
+        allUniques=uG
+    else:
+        allUniques=np.unique(np.concatenate((uT,uG)))
     sU=allUniques.shape[0]
     for i in range(sU):
         imageTruth[imageTruth==allUniques[i]]=i

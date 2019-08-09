@@ -11,6 +11,7 @@ import utilities as ut
 import argparse
 import os
 import shutil
+from datetime import date
 
 """
 Execute the keypoint transfer segmentation algorithm
@@ -25,8 +26,10 @@ end: end of the interval of image used
 segMap: generated segmentation
 the dice coefficients of the segmentation gets printed
 """
-if f:
-    f.close()
+
+if 'f' in locals():
+    if f:
+        f.close()
 parser = argparse.ArgumentParser(description='Execute the keypoint transfer segmentation algorithm')
 parser.add_argument('--testFile',help='Name of the test file, default:Caltech_0051456',default='Caltech_0051456')
 parser.add_argument('--outputFile',help='Name of the output image file, default:newOutput',default='newOutput')
@@ -86,13 +89,15 @@ uTruth=np.unique(truth)
 result=np.zeros((uTruth.shape[0],4))
 result[:,0]=uTruth
 print('\ndice coefficients')
+f=open(os.path.join(outputPath,"outputInfo.txt"),"w+")
+f.write(str(date.today()))
 for j in range(uTruth.shape[0]):
     result[j,1]=np.sum(truth==uTruth[j])
     result[j,2]=np.sum(segMap==uTruth[j])
     if result[j,2]>0:
         result[j,3]=ut.getDC(segMap,truth,uTruth[j])
+        f.write('\nlabel '+str(uTruth[j])+'\tdc:'+str(result[j,3]))
         print('label ',uTruth[j],'\tdc:',result[j,3])
         
-ut.generateAllSlices(truth,segMap,outputPath,tabOfKeyTransfered,0)
-f=open(os.path.join(outputPath,"outputInfo.txt"),"w+")
+ut.generateAllSlices(truth,segMap,outputPath,tabOfKeyTransfered,ignoreLabelsNotInGenerated=1)
 f.close()

@@ -4,6 +4,8 @@ from scipy.ndimage import gaussian_filter
 from scipy.ndimage import zoom
 import nibabel as nib
 import utilities as ut
+from numba import guvectorize,float64,int64
+import numpy as np
 
 #COMMENT TEMPLATE
 """
@@ -39,6 +41,14 @@ def getSubListFromArrayIndexing(originalList,arrayIndex):
     for i in range(arrayIndex.shape[0]):
         outList.append(originalList[arrayIndex[i]])
     return outList
+
+def getSubArrayByRadius(array,XYz,radius):
+    #return a cubic or square array centered on XYz and with radius*2+1 size
+    
+    if len(array.shape)>2:
+        return array[XYz[0]-radius:XYz[0]+radius+1,XYz[1]-radius:XYz[1]+radius+1,XYz[2]-radius:XYz[2]+radius+1]
+    else:
+        return array[XYz[0]-radius:XYz[0]+radius+1,XYz[1]-radius:XYz[1]+radius+1]
 
 def getNiiData(niiPath):
     """
@@ -252,6 +262,7 @@ def voting(testImage,trainingImages,listMatches,listLabels,nbLabel=256):
         mLL[k]=i
     return [pMap,mLL]
     
+
 def createDistanceArray(shape,xyz):
     s=np.array([shape[0],shape[1],shape[2],3])
     pos=np.zeros(s)
@@ -268,6 +279,78 @@ def createDistanceArray(shape,xyz):
     distance=distance.astype(int)
     return distance
 
+@guvectorize([(float64[:,:,:],float64[:,:,:],int64[:], int64,int64[:])], '(x,y,z),(x2,y2,z2),(m),()->(m)',nopython=True)
+def findBestPatchMatch(image,patch,target,radius,bestMatch):
+    pR=(patch.shape[0]-1)/2
+    bestDiff=0
+    for x in range(target[0]-radius,target[0]+radius+1):
+        for y in range(target[1]-radius,target[1]+radius+1):
+            for z in range(target[2]-radius,target[2]+radius+1):
+                imageP=image[x-pR:x+pR+1,y-pR:y+pR+1,z-pR:z+pR+1]
+                imagePAvg=np.mean(imageP)
+                patchAvg=np.mean(patch)
+                diff=1/(1+np.sum(np.abs((imageP-imagePAvg)-(patch-patchAvg))))
+                if diff > bestDiff:
+                    bestDiff=diff
+                    bestMatch[:]=[x,y,z]
+                    
+def comparePatch(p1,p2):
+    p1Avg=np.average(p1)
+    p2Avg=np.average(p2)
+    diffSum=np.sum(np.abs((p1-p1Avg)-(p2-p2Avg)))/p1.size
+    diff=1/(1+diffSum)
+    if np.isnan(diff):
+        print('hey')
+    return diff
+    
+def fill(array2D,y0):
+    for x in range(array2D.shape[0]):
+           ind=np.argwhere(array2D[x,:])
+           if ind.any():
+               d=int(y0-ind[0])
+               array2D[x,y0-d:y0+d+1]=True
+    
+def drawCircle(array, x0, y0, radius):
+    f = 1 - radius
+    ddf_x = 1
+    ddf_y = -2 * radius
+    x = 0
+    y = radius
+    array[x0, y0 + radius]=True
+    array[x0, y0 - radius]=True
+    array[x0 + radius, y0]=True
+    array[x0 - radius, y0]=True
+
+    while x < y:
+        if f >= 0: 
+            y -= 1
+            ddf_y += 2
+            f += ddf_y
+        x += 1
+        ddf_x += 2
+        f += ddf_x    
+        array[x0 + x, y0 + y ]=True
+        array[x0 - x, y0 + y ]=True
+        array[x0 + x, y0 - y ]=True
+        array[x0 - x, y0 - y ]=True
+        array[x0 + y, y0 + x ]=True
+        array[x0 - y, y0 + x ]=True
+        array[x0 + y, y0 - x ]=True
+        array[x0 - y, y0 - x ]=True
+def drawSphere(array,x0,y0,z0,radius):
+    r=0
+    drawCircle(array[:,:,z0],x0,y0,radius)
+    fill(array[:,:,z0],y0)
+    for i in range(radius,0,-1):  
+        
+        while radius+0.5>np.sqrt(r**2 +i**2):
+            r+=1
+        r-=1
+        drawCircle(array[:,:,z0+i],x0,y0,r)
+        drawCircle(array[:,:,z0-i],x0,y0,r)
+        fill(array[:,:,z0+i],y0)
+        fill(array[:,:,z0-i],y0)
+               
 def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBrainPaths,testBrain,pMap,listLabels,outputInfoFile,generateDistanceInfo):
     """
     Transfer segmentation from training images to a probability map based on most likely labels, pixel similarity,
@@ -286,6 +369,7 @@ def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBra
     lMap: segmentaiton map (final)
     lMapProb: label probability for each pixel (for debugging use)
     """
+    cCompilation=np.zeros((testImage.shape[0],len(listMatches),62))
     f=outputInfoFile
     labelList=np.unique(mLL)
     nbLabel=labelList.shape[0]
@@ -298,6 +382,7 @@ def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBra
         
         for i in range(np.shape(listMatches)[0]):
             matches=listMatches[i]
+            trainingImage=trainingImages[i]
             
             #check if k Key is matched with i training Image
             if np.sum(matches[:,0]==k)>0:
@@ -306,64 +391,85 @@ def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBra
                 
                 trainingImageLabels=listLabels[i]
                 label=trainingImageLabels[matches[:,0]==k].astype(int)
-                
+
                 if mLL[k]==label and label!=0:
+
                     #get brain map
                     listOfKeyTransfered[k,:]=testImage[k,0:3]
                     trainingBrain=getNiiData(trainingBrainPaths[i])
                     trainingAseg=getNiiData(trainingAsegPaths[i])
                     
                     segMap=trainingAseg==label
+  
+                    labelIndex=labelList==label
                     
-                    intensityTest=testBrain*segMap
-                    intensityTraining=trainingBrain*segMap
-                    intensityDiff=intensityTest-intensityTraining
+                    #calculating initial translation
+                    XYZt=np.int64(trainingImage[trainingKeyIndex,0:3])
+                    XYZ=np.int64(testImage[k,0:3])
 
-                    vv=np.var(intensityDiff) #to confirm
+                    #pinpointing best translation
+                    pR=np.int64(5)
+                    bestMatch=np.zeros(3,dtype=np.int64)
+                    patch=getSubArrayByRadius(trainingBrain,XYZt,pR)
+                    findBestPatchMatch(testBrain,patch,XYZ,pR,bestMatch)
+                    XYZ=bestMatch
+                    [dx,dy,dz]=XYZ-XYZt
                     
-                    if vv!=0:
-                        #can be 0 if it's a slice without brain in it
-                        c=1/np.sqrt(2*np.pi*vv)
+                    transferedSeg=np.zeros(testBrain.shape)
+                    c=1
+                    r=2 
+                    maxRad=30 #temporary
+                    patchFilter0=np.zeros((2*maxRad+1,2*maxRad+1,2*maxRad+1),dtype=np.bool)
+                    getOut=0
+                    bandSize=3
+                    while  c>=0.01 and r<maxRad-bandSize:
+                        #check if current patch is out of bound of image, stops if it is
+                        for ii in range(3):
+                            if (min(XYZ[ii]-r,XYZt[ii]-r)<0) or (max(XYZ[ii]+r,XYZt[ii]+r)>=imageShape[ii]):
+                                getOut=1
+                        if getOut==1:
+                            break
                         
-                        #a checker
-#                        W=c*np.exp(-np.power(intensityDiff,2)/(2*vv),where=segMap)
-                        W=np.log(c)+(-np.power(intensityDiff,2)/(2*vv))
-                        
-                        #pmap [nbLabel,nbKeyTest,nbTrainingImages]
-                        labelIndex=labelList==label
-#                        toAdd=W*pMap[label,k]*matches[matches[:,0]==k,2]
-                        toAdd=np.exp(W+segMap*np.log(pMap[label,k])+segMap*np.log(matches[matches[:,0]==k,2]),where=segMap)
-                        temp=np.expand_dims(toAdd,axis=3)
-                        trainingImage=trainingImages[i]
-                        
-                        
-                        
-                        #calculating translation
-                        [xT,yT,zT]=trainingImage[trainingKeyIndex,0:3].astype(int)
-                        [x,y,z]=testImage[k,0:3].astype(int)
-                        [dx,dy,dz]=np.array([x,y,z])-np.array([xT,yT,zT])
-                        [sx,sy,sz]=np.max(np.array([[0-dx,0-dy,0-dz],[0,0,0]]),axis=0)
-                        [ex,ey,ez]=np.min(np.array([[toAdd.shape[0],toAdd.shape[1],toAdd.shape[2]],[toAdd.shape[0]-dx,toAdd.shape[1]-dy,toAdd.shape[2]-dz]]),axis=0)
-                        
-                        if generateDistanceInfo==1:
-                            #measuring intensity in function of distance
-                            distArray=createDistanceArray(toAdd.shape,[xT,yT,zT])
-                            for j in range(maxDist):
-                                n=np.sum(distArray==j)
-                                if n>0:
-                                    distSave[j,0]=+np.sum(temp[distArray==j])
-                                    distSave[j,1]=+n  
-                                
-                        lMapProb[sx+dx:ex+dx,sy+dy:ey+dy,sz+dz:ez+dz,labelIndex]=+temp[sx:ex,sy:ey,sz:ez]
+                        patchSegMap=getSubArrayByRadius(segMap,XYZt,r)
+                        patchFilter1=np.zeros((2*maxRad+1,2*maxRad+1,2*maxRad+1),dtype=np.bool)
+                        drawSphere(patchFilter1,maxRad,maxRad,maxRad,r)
+                        patchFilter=np.logical_xor(patchFilter0,patchFilter1)
+                        p1=getSubArrayByRadius(testBrain,XYZ,r)
+                        p2=getSubArrayByRadius(trainingBrain,XYZt,r)
+                        subPatchFilter=getSubArrayByRadius(patchFilter,[maxRad,maxRad,maxRad],r)
+                        f=patchSegMap*subPatchFilter
+                        if np.sum(f)>0:
+                            p1U=p1[f]
+                            p2U=p2[f]
+                            c=comparePatch(p1U,p2U) 
+    #                        if c!=0:\
+    #                            print('hey')
+                            cCompilation[k,i,r]=c
+                            transferedSeg[XYZ[0]-r:XYZ[0]+r+1,XYZ[1]-r:XYZ[1]+r+1,XYZ[2]-r:XYZ[2]+r+1]=c*f +transferedSeg[XYZ[0]-r:XYZ[0]+r+1,XYZ[1]-r:XYZ[1]+r+1,XYZ[2]-r:XYZ[2]+r+1]
+                        patchFilter0=patchFilter1
+                        r+=bandSize
+                                                                
+#                        if generateDistanceInfo==0:
+#                            #measuring intensity in function of distance
+#                            distArray=createDistanceArray(toAdd.shape,[xT,yT,zT])
+#                            for j in range(maxDist):
+#                                n=np.sum(distArray==j)
+#                                if n>0:
+#                                    distSave[j,0]=+np.sum(temp[distArray==j])
+#                                    distSave[j,1]=+n  
+                    if (label==41 or label==42) and np.sum(transferedSeg[135:,:,:])>0:
+                        print('ap')
+                    lMapProb[:,:,:,labelIndex]+=np.expand_dims(transferedSeg,axis=3)
         print("seg keypoint nb\t",k,'/',testImage.shape[0])
+
     lMap=np.zeros((256,256,256))  
-    maxProb=np.max(lMapProb)  
-    lMapProb[lMapProb[:,:,:,0]>0.15*maxProb]=0.15*maxProb    
-    lMap=np.argmax(lMapProb,axis=3)
+#    maxProb=np.max(lMapProb)  
+#    lMapProb[lMapProb[:,:,:,0]>0.15*maxProb]=0.15*maxProb    
+    lMap1=np.argmax(lMapProb,axis=3)
     
 
     for i in range(nbLabel):
-        binaryMap=lMap==i
+        binaryMap=lMap1==i
         lMap[binaryMap]=labelList[i]
     
     #print distance
