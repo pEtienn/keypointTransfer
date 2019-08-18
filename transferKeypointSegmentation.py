@@ -13,6 +13,8 @@ import os
 import shutil
 from datetime import date
 
+np.set_printoptions(precision=2, suppress=True)
+
 """
 Execute the keypoint transfer segmentation algorithm
  *** INPUT ***
@@ -30,14 +32,17 @@ the dice coefficients of the segmentation gets printed
 if 'f' in locals():
     if f:
         f.close()
+
 parser = argparse.ArgumentParser(description='Execute the keypoint transfer segmentation algorithm')
 parser.add_argument('--testFile',help='Name of the test file, default:Caltech_0051456',default='Caltech_0051456')
 parser.add_argument('--outputFile',help='Name of the output image file, default:newOutput',default='newOutput')
-parser.add_argument('--trainingInterval',help='Range of the files taken in the ABIDEdata folder to use for training, default: 0 10', type=int,nargs=2,default=[0 ,10])
+parser.add_argument('--trainingInterval',help='Range of the files taken in the Training data folder to use for training, default: 0 10', type=int,nargs=2,default=[0 ,10])
+parser.add_argument('--commonDataPath',help='Path of the folder containing trainingData, see ABIDEData 100 for example of internal structure, this argument is required')
 parser.add_argument('--generateDistanceInfo',help='Test feature, default:0',type=int,default='0')
+parser.add_argument('--ignoreLabelsNotInGenerated',help='In the generated images do not show labels not present in generated image, default:0',type=int,default='0')
 listArg=parser.parse_args()
 [start,end]=listArg.trainingInterval
-commonPath=os.path.join(os.path.dirname(os.path.realpath(__file__)),'ABIDEdata')
+commonPath=listArg.commonDataPath
 outputPath=os.path.join(os.path.dirname(os.path.realpath(__file__)),'Outputs',listArg.outputFile)
 if os.path.isdir(outputPath): #uT.generateAllSlices expects a non-existing folder path
         shutil.rmtree(outputPath, ignore_errors=False, onerror=None)
@@ -45,43 +50,39 @@ print(start,end)
 os.mkdir(outputPath)
 f=open(os.path.join(outputPath,"outputInfo.txt"),"w+")
 
-#print(listArg.outputFile)
-#print(start,end)
-#print(listArg.trainingPath)
-
 patientName=listArg.testFile
 
 
-allKeyfiles=ut.getListFileKey(commonPath)
+allKeyPaths=ut.getListFileKey(commonPath)
 allAsegPaths=ut.getAsegPaths(commonPath)
-allBrainPaths=ut.getBrainPath(commonPath)
+allVolumePaths=ut.getBrainPath(commonPath)
 
 trainingAsegPaths=allAsegPaths[start:end]
-trainingBrainPaths=allBrainPaths[start:end]
+trainingVolumePaths=allVolumePaths[start:end]
 
-testBrain=kt.getNiiData(os.path.join(commonPath,'mri','mri_'+patientName+'.nii'))
-testImage=ut.getKeypointFromOneFile(os.path.join(commonPath,'keypoint','key_'+patientName+'.key'))
-truth=kt.getNiiData(os.path.join(commonPath,'segmentation','aseg_'+patientName+'.nii'))
+testVolume=kt.getNiiData([x for x in allVolumePaths if patientName in x][0])
+keyTest=ut.getKeypointFromOneFile([x for x in allKeyPaths if patientName in x][0])
+truth=kt.getNiiData([x for x in allAsegPaths if patientName in x][0])
 
 
 allKey=[]
 for i in range(start,end):
-    allKey.append(ut.getKeypointFromOneFile(allKeyfiles[i]))
+    allKey.append(ut.getKeypointFromOneFile(allKeyPaths[i]))
 y=0
 for i in range(len(trainingAsegPaths)):
     if patientName in trainingAsegPaths[i-y]:
         allKey.pop(i)
         trainingAsegPaths.pop(i)
-        trainingBrainPaths.pop(i)
+        trainingVolumePaths.pop(i)
         y=1
-trainingImages=allKey
+keyTrainingData=allKey
 
 #do the segmentation
-allMatches=kt.keypointDescriptorMatch(testImage,trainingImages)
-listMatches=kt.matchDistanceSelection(allMatches,testImage,trainingImages)
-listLabels=kt.getAllLabels(trainingAsegPaths,listMatches,trainingImages)
-pMap,mLL=kt.voting(testImage,trainingImages,listMatches,listLabels)
-segMap,lMap,tabOfKeyTransfered=kt.doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBrainPaths,testBrain,pMap,listLabels,f,listArg.generateDistanceInfo)
+allMatches=kt.keypointDescriptorMatch(keyTest,keyTrainingData)
+listMatches=kt.matchDistanceSelection(allMatches,keyTest,keyTrainingData)
+listLabels=kt.getAllLabels(trainingAsegPaths,listMatches,keyTrainingData)
+pMap,mLL=kt.voting(keyTest,keyTrainingData,listMatches,listLabels)
+segMap,lMap,tabOfKeyTransfered=kt.doSeg(keyTest,listMatches,mLL,keyTrainingData,trainingAsegPaths,trainingVolumePaths,testVolume,pMap,listLabels,f,listArg.generateDistanceInfo)
 
 #evaluate results
 
@@ -99,5 +100,5 @@ for j in range(uTruth.shape[0]):
         f.write('\nlabel '+str(uTruth[j])+'\tdc:'+str(result[j,3]))
         print('label ',uTruth[j],'\tdc:',result[j,3])
         
-ut.generateAllSlices(truth,segMap,outputPath,tabOfKeyTransfered,ignoreLabelsNotInGenerated=1)
+ut.generateAllSlices(truth,segMap,outputPath,tabOfKeyTransfered,listArg.ignoreLabelsNotInGenerated)
 f.close()

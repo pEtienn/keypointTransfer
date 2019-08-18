@@ -8,21 +8,6 @@ import matplotlib as mpl
 import shutil
 import time
 
-
-def dilate3D(im,kernel): 
-    kSize=kernel.shape[0]
-    kSm=int((kSize-1)/2)
-    bufferedIm=np.zeros((im.shape[0]+(kSize-1),im.shape[1]+(kSize-1),im.shape[2]+(kSize-1)))
-    index=slice(kSm,bufferedIm.shape[0]-kSm)
-    bufferedIm[index,index,index]=im
-    
-    for x in range(im.shape[0]):
-        for y in range(im.shape[1]):
-            for z in range(im.shape[2]):
-                temp=bufferedIm[x:x+2*kSm+1,y:y+2*kSm+1,z:z+2*kSm+1]
-                im[x,y,z]=np.max(np.multiply(temp,kernel))
-    return im
-
 def createCrossKernel(value,size):
     k=np.zeros((size,size,size))
     c=int((size-1)/2)
@@ -61,6 +46,8 @@ def getKeypointFromOneFile(filePath):
     #skip
     for i in range(6):
         temp=file.readline()    
+        if i==5 and temp[:5]!='Scale':
+            print("keypointFile format not supported")
     end=0
      
     
@@ -91,6 +78,7 @@ def generateAllSlices(imageTruth,imageGenerated,folderPath,listOfKeypointCoordin
     uT=np.unique(imageTruth).astype(int)
     uG=np.unique(imageGenerated)
     
+    #used to reduce number of labels in image
     if ignoreLabelsNotInGenerated==1 and uT.shape[0]>=20:
         for i in range(uT.shape[0]):
             if np.sum(uG==uT[i])==0:
@@ -99,6 +87,7 @@ def generateAllSlices(imageTruth,imageGenerated,folderPath,listOfKeypointCoordin
     else:
         allUniques=np.unique(np.concatenate((uT,uG)))
     sU=allUniques.shape[0]
+    
     for i in range(sU):
         imageTruth[imageTruth==allUniques[i]]=i
         imageGenerated[imageGenerated==allUniques[i]]=i
@@ -118,7 +107,7 @@ def generateAllSlices(imageTruth,imageGenerated,folderPath,listOfKeypointCoordin
     
     #generate map of keypoints transfered
     crossSize=3
-    keypointMatrix=np.zeros((256,256,256))
+    keypointMatrix=np.zeros((XYZ))
     for i in range(listOfKeypointCoordinate.shape[0]):
         [x,y,z]=listOfKeypointCoordinate[i,:]
         x=x.astype(int)
@@ -169,62 +158,7 @@ def generateAllSlices(imageTruth,imageGenerated,folderPath,listOfKeypointCoordin
 #                canvasCoronal[0:X,Y:Y*2]=imageGenerated[:,:,i]
 #                plt.imsave(os.path.join(folder,(str(i))),canvasCoronal,vmin=0,vmax=sU,cmap=cmapName)
 
-def generateSagSliceComp(imageGenerated,folderPath,listOfKeypointCoordinate,sliceNumber,patientName):
-    viewNames=['sagittal','axial','coronal']
-    
-    uG=np.unique(imageGenerated)
 
-    allUniques=np.unique(uG)
-    sU=allUniques.shape[0]
-    for i in range(sU):
-        imageGenerated[imageGenerated==allUniques[i]]=i
-    
-    if sU<20:
-        cmapName='tab20'
-    else:
-        cmapName='viridis'
-    
-    X=imageGenerated.shape[0]
-    Y=imageGenerated.shape[0]
-    Z=imageGenerated.shape[0]
-    canvasSagittal=np.zeros((Y,Z))
-    
-    #generate map of keypoints transfered
-    crossSize=3
-    keypointMatrix=np.zeros((256,256,256))
-    for i in range(listOfKeypointCoordinate.shape[0]):
-        [x,y,z]=listOfKeypointCoordinate[i,:]
-        x=x.astype(int)
-        y=y.astype(int)
-        z=z.astype(int)
-        keypointMatrix[x,y,z]=1
-        for i in range(-(crossSize-1),(crossSize)):
-            keypointMatrix[x+i,y,z]=1
-            keypointMatrix[x,y+i,z]=1
-            keypointMatrix[x,y,z+i]=1
-        
-    
-    norm=mpl.colors.Normalize(vmin=0,vmax=sU)
-    cmap=cmapName
-    SMI=cm.ScalarMappable(norm=norm,cmap=cmap)
-    
-    norm1=mpl.colors.Normalize(vmin=0,vmax=1)
-    cmap1=cm.hsv
-    SMR=cm.ScalarMappable(norm=norm1,cmap=cmap1)
-    
-    folder=os.path.join(folderPath,viewNames[0])
-    os.mkdir(folder)
-
-
-    canvasSagittal[0:Y,0:Z]=imageGenerated[sliceNumber,:,:]
-    tempIm=np.uint8(SMI.to_rgba(canvasSagittal)*255)
-    im = Image.fromarray(tempIm)
-    imToPaste=np.uint8(SMR.to_rgba(keypointMatrix[sliceNumber,:,:])*255)
-    mask = Image.fromarray(np.uint8(255*(keypointMatrix[sliceNumber,:,:]>0)))
-    im.paste(Image.fromarray(imToPaste),(0,0),mask)
-    sPath=os.path.join(folder,patientName+'.png')
-
-    im.save(sPath)
     
 def getValuesInIm(im):
     u=np.unique(im)

@@ -43,8 +43,15 @@ def getSubListFromArrayIndexing(originalList,arrayIndex):
     return outList
 
 def getSubArrayByRadius(array,XYz,radius):
-    #return a cubic or square array centered on XYz and with radius*2+1 size
-    
+    """
+    return a cubic or square array centered on XYz and with radius*2+1 size
+     *** INPUT ***
+    array: array to get the subArray from
+    XYz: center of the sub array, either [x,y,z] or [x,y] depending on the dimension of array
+    radius: radius of the sub array. Dimension of the subArray will be (r*2+1)^(2or3)
+     *** OUTPUT ***
+    output:subArray
+    """
     if len(array.shape)>2:
         return array[XYz[0]-radius:XYz[0]+radius+1,XYz[1]-radius:XYz[1]+radius+1,XYz[2]-radius:XYz[2]+radius+1]
     else:
@@ -59,7 +66,9 @@ def getNiiData(niiPath):
     return data (in our case a 3D numpy array)
     """
     img=nib.load(niiPath)
-    return img.get_fdata()
+    return np.float32(img.get_fdata())
+    
+    
 
 def getImgLabels(niiPath,keypointXYZs):
     """
@@ -77,15 +86,15 @@ def getImgLabels(niiPath,keypointXYZs):
         labelsOut[key]=img[xyz]
     return labelsOut
 
-def getAllLabels(niiPaths,allMatches,trainingImages):
+def getAllLabels(niiPaths,allMatches,keyTrainingData):
     """
     loop of getImgLabels over all keypoints contained in allMatches
      *** INPUT ***
-    niipaths: niipaths of all trainingImages in the same order as trainingImages
-    allMatches: list of matches. Same lenght and order as trainingImages.
+    niipaths: niipaths of all keyTrainingData in the same order as keyTrainingData
+    allMatches: list of matches. Same lenght and order as keyTrainingData.
                 allMatches[x] returns an array of 3 colums
                 testImage key - trainingImage key matched to it - probability
-    trainingImages: list of all trainingImages
+    keyTrainingData: list of all keyTrainingData
                     contains a list of SIFT key
      *** OUTPUT ***
      list of labels. Each element of the list contains the output of getImgLabels
@@ -96,44 +105,44 @@ def getAllLabels(niiPaths,allMatches,trainingImages):
     for img in range(len(allMatches)):
         matches=allMatches[img]
         niiPath=niiPaths[img]
-        trainingImage=trainingImages[img]
+        trainingImage=keyTrainingData[img]
         XYZ=(trainingImage[matches[:,1].astype(int),kIP.XYZ]).astype(int)
         listLabels.append(getImgLabels(niiPath,XYZ))
     return listLabels
         
         
         
-def keypointDescriptorMatch(testImage, trainingImages):
+def keypointDescriptorMatch(keyTest, keyTrainingData):
     """
     for each training image
         for each keypoint in test image
             finds the closest keypoint in the training image and approve it or not
      *** INPUT ***
-    testImage: SIFT keypoint of the test image
-    trainingImages: list containing SIFT keypoints for all trainingImages
+    keyTest: SIFT keypoint of the test image
+    keyTrainingData: list containing SIFT keypoints for all keyTrainingData
      *** OUTPUT ***
-    list of matches, in the same order as trainingImages
+    list of matches, in the same order as keyTrainingData
     """
     #create one matchmap for each training images
-    #for each keypoint in testImage
+    #for each keypoint in keyTest
         #find if there is any similar keypoint in the trainingImage
     flannM = FLANN()
     allMatches=[]
-    for imageI in range(len(trainingImages)):
+    for imageI in range(len(keyTrainingData)):
         
-        trainingImage=trainingImages[imageI]
+        trainingImage=keyTrainingData[imageI]
         params = flannM.build_index(trainingImage[:,kIP.descriptor], algorithm="kdtree",trees=4);
-        nbKey=testImage.shape[0]
+        nbKey=keyTest.shape[0]
         matches=np.full((nbKey,2),-1)
         
         for keyI in range(nbKey):
             #get 2 closest neighbors
-            result, dist = flannM.nn_index(testImage[keyI,kIP.descriptor],2, checks=params["checks"]);
+            result, dist = flannM.nn_index(keyTest[keyI,kIP.descriptor],2, checks=params["checks"]);
             
             #check scale and distance ratio
             sT=trainingImage[result[0,0],kIP.scale]
-            sI=testImage[keyI,kIP.scale]
-            if (sI/sT>=0.5 and sI/sT<=2) and dist[0,0]/dist[0,1]<=0.9:
+            sI=keyTest[keyI,kIP.scale]
+            if (sI/sT>=0.5 and sI/sT<=2) and (dist[0,0]/dist[0,1]<=0.9):
                 matches[keyI,:]=[keyI,result[0,0]]
         #remove all key row where there were no valid matches
         matches2=matches[matches.min(axis=1)>=0,:]
@@ -155,36 +164,36 @@ def houghTransformGaussian(matchedXYZDifference,sigma=3):
     """
     dXYZ=matchedXYZDifference
     maxDiff=np.amax(np.abs(dXYZ)).astype(int)
-    s=maxDiff*2+1
-    probMap=np.zeros((s,s,s))
+    s=2*maxDiff+1
+    probMap=np.zeros((s,s,s),dtype=np.float64)
     for j in range(np.shape(dXYZ)[0]):
-        xyz= tuple((np.floor(dXYZ[j,:])+maxDiff).astype(int))
-        probMap[xyz]=probMap[xyz]+1
+            xyz= tuple((np.floor(dXYZ[j,:])+maxDiff).astype(int))
+            probMap[xyz]=probMap[xyz]+1
     probMap=gaussian_filter(probMap,sigma)
     probableDXYZ=np.unravel_index(np.argmax(probMap),probMap.shape)-maxDiff
     
     return [probMap, probableDXYZ]
 
-def matchDistanceSelection(allMatches,testImage,trainingImages):
+def matchDistanceSelection(allMatches,keyTest,keyTrainingData):
     """
     __FUNCTION DESCRIPTION__
     Use the distance difference between matches to evaluate how likely that match is. 
     Then trim down the list of matches based on that.
     *** INPUT ***
     allMatches: output from keypointDescriptorMatch funciton
-    testImage: SIFT keypoint of the test image
-    trainingImages: list containing SIFT keypoints for all trainingImages
+    keyTest: SIFT keypoint of the test image
+    keyTrainingData: list containing SIFT keypoints for all keyTrainingData
      *** OUTPUT ***
     trimmed down list of matches
     """
     distanceTestedMatches=[]
     for j in range(len(allMatches)):
         matches=allMatches[j]
-        trainingImage=trainingImages[j]
+        keyTrainingDatum=keyTrainingData[j]
         
-        testXYZ=testImage[matches[:,0],kIP.XYZ]
-        trainingXYZ=trainingImage[matches[:,1],kIP.XYZ]
-        matchedXYZDifference=testXYZ-trainingXYZ
+        testXYZ=keyTest[matches[:,0],kIP.XYZ]
+        trainingXYZ=keyTrainingDatum[matches[:,1],kIP.XYZ]
+        matchedXYZDifference=testXYZ-trainingXYZ      
         [probMap,probableTranslation]=houghTransformGaussian(matchedXYZDifference)
         
         probTransMarix=np.full((np.shape(matches)[0],3),probableTranslation)
@@ -203,52 +212,52 @@ def matchDistanceSelection(allMatches,testImage,trainingImages):
         
     return distanceTestedMatches
 
-def voting(testImage,trainingImages,listMatches,listLabels,nbLabel=256):
+def voting(keyTest,keykeyTrainingData,listMatches,listLabels,nbLabel=41000):
     """
     Uses match probability and keypoint similarity to estimate the most likeyly
     label for each keypoint in the test image
      *** INPUT ***
-    testImage: SIFT keypoint of the test image
-    trainingImages: list containing SIFT keypoints for all trainingImages
+    keyTest: SIFT keypoint of the test image
+    keykeyTrainingData: list containing SIFT keypoints for all keykeyTrainingData
     listMatches: output from matchDistanceSelection funciton
-    listLabels: output of getAllLabels(trainingAsegPaths,listMatches,trainingImages)
+    listLabels: output of getAllLabels(trainingAsegPaths,listMatches,keykeyTrainingData)
     nbLabel: number of possible labels in the images
      *** OUTPUT ***
     pMap: array containing for each test keypoint label combination [nbLabel,nbKeyTest]
     mLL: most likeyly label for each test keypoint [nbKeyTest]
     """
 #    maxLabel=0
-    nbTrainingImages=len(trainingImages)
-    nbKeyTest=np.shape(testImage)[0]
+    nbkeykeyTrainingData=len(keykeyTrainingData)
+    nbKeyTest=np.shape(keyTest)[0]
     pMap=np.zeros((nbLabel,nbKeyTest))
     
     
     for k in range(nbKeyTest):
-        descriptorDistances=np.zeros((nbTrainingImages))
-        matchProb=np.zeros((nbTrainingImages))
-        labels=np.zeros((nbTrainingImages))
+        descriptorDistances=np.zeros((nbkeykeyTrainingData))
+        matchProb=np.zeros((nbkeykeyTrainingData))
+        labels=np.zeros((nbkeykeyTrainingData))
         tauxTaux=0
-        for i in range(nbTrainingImages):  
+        for i in range(nbkeykeyTrainingData):  
             
-            trainingImage=trainingImages[i]
+            keyTrainingDatum=keykeyTrainingData[i]
             matches=listMatches[i]
             idxMatchedTestedKey=matches[:,0]==k
             if np.sum(idxMatchedTestedKey)>0:
                 matchProb[i]=matches[idxMatchedTestedKey,2]
-                matchedTestedKey=testImage[k,:]
+                matchedTestedKey=keyTest[k,:]
                 idxMatchedTrainingKey=matches[idxMatchedTestedKey,1].astype(int)
-                matchedTrainingKey=np.squeeze(trainingImage[idxMatchedTrainingKey,:])
+                matchedTrainingKey=np.squeeze(keyTrainingDatum[idxMatchedTrainingKey,:])
                 #calculate euclidean distance without squaring the result
                 descriptorDistances[i]=np.sum(np.power(matchedTestedKey[kIP.descriptor]-matchedTrainingKey[kIP.descriptor],2))               
-                trainingImageLabels=listLabels[i]              
-                labels[i]=trainingImageLabels[idxMatchedTestedKey]
+                keyTrainingDatumLabels=listLabels[i]              
+                labels[i]=keyTrainingDatumLabels[idxMatchedTestedKey]
                 
         tauxTaux=np.power(np.max(descriptorDistances),2)
 
-        for i in range(nbTrainingImages):
+        for i in range(nbkeykeyTrainingData):
             #if tauxTaux==0 it means no match to k where found
             if tauxTaux>0 and matchProb[i]>0:
-                keyPointProbability2=(1/np.sqrt(2*np.pi*tauxTaux))*np.exp(-descriptorDistances[i]/(2*tauxTaux))
+                #keyPointProbability2=(1/np.sqrt(2*np.pi*tauxTaux))*np.exp(-descriptorDistances[i]/(2*tauxTaux)) #non log variant
                 keyPointProbability=np.log(1/np.sqrt(2*np.pi*tauxTaux))+(-descriptorDistances[i]/(2*tauxTaux))
                 label=labels[i].astype(int)
                 temp1=keyPointProbability+np.log(matchProb[i])
@@ -264,6 +273,14 @@ def voting(testImage,trainingImages,listMatches,listLabels,nbLabel=256):
     
 
 def createDistanceArray(shape,xyz):
+    """
+    Create a 3D array containing the distance of each voxel the xyz input
+     *** INPUT ***
+    shape=shape of the created array
+    xyz= voxel to calculate distance from in the array
+     *** OUTPUT ***
+    distance: distance array
+    """
     s=np.array([shape[0],shape[1],shape[2],3])
     pos=np.zeros(s)
     for j in range(s[0]):
@@ -281,6 +298,17 @@ def createDistanceArray(shape,xyz):
 
 @guvectorize([(float64[:,:,:],float64[:,:,:],int64[:], int64,int64[:])], '(x,y,z),(x2,y2,z2),(m),()->(m)',nopython=True)
 def findBestPatchMatch(image,patch,target,radius,bestMatch):
+    """
+    Uses keypoint match as approximation and then finds the best correspondance using patch comparison
+     *** INPUT ***
+    image: volumetric test image
+    patch: patch from the training data
+    target: XYZ coordinate of the match on the image, always matched to the center of the patch
+    radius: radius of search
+    bestMatch: initialized array that will be used as a output
+     *** OUTPUT ***
+    bestMatch: new xyz for the match on image
+    """
     pR=(patch.shape[0]-1)/2
     bestDiff=0
     for x in range(target[0]-radius,target[0]+radius+1):
@@ -311,6 +339,7 @@ def fill(array2D,y0):
                array2D[x,y0-d:y0+d+1]=True
     
 def drawCircle(array, x0, y0, radius):
+    #mid-point circle drawing algorithm
     f = 1 - radius
     ddf_x = 1
     ddf_y = -2 * radius
@@ -351,38 +380,38 @@ def drawSphere(array,x0,y0,z0,radius):
         fill(array[:,:,z0+i],y0)
         fill(array[:,:,z0-i],y0)
                
-def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBrainPaths,testBrain,pMap,listLabels,outputInfoFile,generateDistanceInfo):
+def doSeg(keyTest,listMatches,mLL,keyTrainingData,trainingAsegPaths,trainingVolumePaths,testVolume,pMap,listLabels,outputInfoFile,generateDistanceInfo):
     """
     Transfer segmentation from training images to a probability map based on most likely labels, pixel similarity,
     pMap and the match probability
      *** INPUT ***
-    testImage: SIFT keypoint of the test image
+    keyTest: SIFT keypoint of the test image
     listMatches: output from matchDistanceSelection funciton
     mLL: most likey labels, output from voting function
-    trainingImages: list containing SIFT keypoints for all trainingImages
+    keyTrainingData: list containing SIFT keypoints for all keyTrainingData
     trainingAsegPaths: list of paths of training images segmentation
-    trainingBrainPaths: list of paths of training images grescale images
-    testBrain: test image in greyscale
+    trainingVolumePaths: list of paths of training images grescale images
+    testVolume: test image in greyscale
     pMap: output of voting funciton
-    listLabels: output of getAllLabels(trainingAsegPaths,listMatches,trainingImages)
+    listLabels: output of getAllLabels(trainingAsegPaths,listMatches,keyTrainingData)
      *** OUTPUT ***
     lMap: segmentaiton map (final)
     lMapProb: label probability for each pixel (for debugging use)
     """
-    cCompilation=np.zeros((testImage.shape[0],len(listMatches),62))
+    cCompilation=np.zeros((keyTest.shape[0],len(listMatches),62))
     f=outputInfoFile
     labelList=np.unique(mLL)
     nbLabel=labelList.shape[0]
-    imageShape=testBrain.shape
-    lMapProb=np.zeros((256,256,256,nbLabel),dtype=np.float64)
+    imageShape=testVolume.shape
+    lMapProb=np.zeros((imageShape[0],imageShape[1],imageShape[2],nbLabel),dtype=np.float32)
     maxDist=np.max(np.shape(lMapProb))
     distSave=np.zeros((maxDist,2))
-    listOfKeyTransfered=np.full((testImage.shape[0],3),-1)
-    for k in range(np.shape(testImage)[0]):
+    listOfKeyTransfered=np.full((keyTest.shape[0],3),-1)
+    for k in range(np.shape(keyTest)[0]):
         
         for i in range(np.shape(listMatches)[0]):
             matches=listMatches[i]
-            trainingImage=trainingImages[i]
+            trainingImage=keyTrainingData[i]
             
             #check if k Key is matched with i training Image
             if np.sum(matches[:,0]==k)>0:
@@ -395,8 +424,8 @@ def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBra
                 if mLL[k]==label and label!=0:
 
                     #get brain map
-                    listOfKeyTransfered[k,:]=testImage[k,0:3]
-                    trainingBrain=getNiiData(trainingBrainPaths[i])
+                    listOfKeyTransfered[k,:]=keyTest[k,0:3]
+                    trainingBrain=getNiiData(trainingVolumePaths[i])
                     trainingAseg=getNiiData(trainingAsegPaths[i])
                     
                     segMap=trainingAseg==label
@@ -405,17 +434,17 @@ def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBra
                     
                     #calculating initial translation
                     XYZt=np.int64(trainingImage[trainingKeyIndex,0:3])
-                    XYZ=np.int64(testImage[k,0:3])
+                    XYZ=np.int64(keyTest[k,0:3])
 
                     #pinpointing best translation
                     pR=np.int64(5)
                     bestMatch=np.zeros(3,dtype=np.int64)
                     patch=getSubArrayByRadius(trainingBrain,XYZt,pR)
-                    findBestPatchMatch(testBrain,patch,XYZ,pR,bestMatch)
+                    findBestPatchMatch(testVolume,patch,XYZ,pR,bestMatch)
                     XYZ=bestMatch
                     [dx,dy,dz]=XYZ-XYZt
                     
-                    transferedSeg=np.zeros(testBrain.shape)
+                    transferedSeg=np.zeros(testVolume.shape)
                     c=1
                     r=2 
                     maxRad=30 #temporary
@@ -434,7 +463,7 @@ def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBra
                         patchFilter1=np.zeros((2*maxRad+1,2*maxRad+1,2*maxRad+1),dtype=np.bool)
                         drawSphere(patchFilter1,maxRad,maxRad,maxRad,r)
                         patchFilter=np.logical_xor(patchFilter0,patchFilter1)
-                        p1=getSubArrayByRadius(testBrain,XYZ,r)
+                        p1=getSubArrayByRadius(testVolume,XYZ,r)
                         p2=getSubArrayByRadius(trainingBrain,XYZt,r)
                         subPatchFilter=getSubArrayByRadius(patchFilter,[maxRad,maxRad,maxRad],r)
                         f=patchSegMap*subPatchFilter
@@ -442,7 +471,7 @@ def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBra
                             p1U=p1[f]
                             p2U=p2[f]
                             c=comparePatch(p1U,p2U) 
-    #                        if c!=0:\
+    #                        if c!=0:
     #                            print('hey')
                             cCompilation[k,i,r]=c
                             transferedSeg[XYZ[0]-r:XYZ[0]+r+1,XYZ[1]-r:XYZ[1]+r+1,XYZ[2]-r:XYZ[2]+r+1]=c*f +transferedSeg[XYZ[0]-r:XYZ[0]+r+1,XYZ[1]-r:XYZ[1]+r+1,XYZ[2]-r:XYZ[2]+r+1]
@@ -460,9 +489,9 @@ def doSeg(testImage,listMatches,mLL,trainingImages,trainingAsegPaths,trainingBra
                     if (label==41 or label==42) and np.sum(transferedSeg[135:,:,:])>0:
                         print('ap')
                     lMapProb[:,:,:,labelIndex]+=np.expand_dims(transferedSeg,axis=3)
-        print("seg keypoint nb\t",k,'/',testImage.shape[0])
+        print("seg keypoint nb\t",k,'/',keyTest.shape[0])
 
-    lMap=np.zeros((256,256,256))  
+    lMap=np.zeros(imageShape)  
 #    maxProb=np.max(lMapProb)  
 #    lMapProb[lMapProb[:,:,:,0]>0.15*maxProb]=0.15*maxProb    
     lMap1=np.argmax(lMapProb,axis=3)
