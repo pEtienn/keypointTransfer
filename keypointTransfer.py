@@ -6,6 +6,7 @@ import nibabel as nib
 import utilities as ut
 from numba import guvectorize,float64,int64
 import numpy as np
+from numpy import linalg as LA
 
 #COMMENT TEMPLATE
 """
@@ -325,10 +326,15 @@ def findBestPatchMatch(image,patch,target,radius,bestMatch):
 def comparePatch(p1,p2):
     p1Avg=np.average(p1)
     p2Avg=np.average(p2)
-    diffSum=np.sum(np.abs((p1-p1Avg)-(p2-p2Avg)))/p1.size
-    diff=1/(1+diffSum)
+    np1=p1.flatten()
+    np2=p2.flatten()
+    t1=np1-p1Avg
+    t2=np2-p2Avg
+    np1=(t1)/LA.norm(t1)
+    np2=(t2)/LA.norm(t2)
+    diff=np.dot(np1,np2)
     if np.isnan(diff):
-        print('hey')
+        print('nan in comparePatch')
     return diff
     
 def fill(array2D,y0):
@@ -398,7 +404,6 @@ def doSeg(keyTest,listMatches,mLL,keyTrainingData,trainingAsegPaths,trainingVolu
     lMap: segmentaiton map (final)
     lMapProb: label probability for each pixel (for debugging use)
     """
-    cCompilation=np.zeros((keyTest.shape[0],len(listMatches),62))
     f=outputInfoFile
     labelList=np.unique(mLL)
     nbLabel=labelList.shape[0]
@@ -447,34 +452,44 @@ def doSeg(keyTest,listMatches,mLL,keyTrainingData,trainingAsegPaths,trainingVolu
                     transferedSeg=np.zeros(testVolume.shape)
                     c=1
                     r=2 
+                    sPR=3 #subPatchRadius
                     maxRad=30 #temporary
                     patchFilter0=np.zeros((2*maxRad+1,2*maxRad+1,2*maxRad+1),dtype=np.bool)
                     getOut=0
                     bandSize=3
-                    while  c>=0.01 and r<maxRad-bandSize:
+                    cAvg=1
+                    intVar=np.var(trainingImage)
+                    while  cAvg>=0.001 and r<maxRad-bandSize:
                         #check if current patch is out of bound of image, stops if it is
                         for ii in range(3):
-                            if (min(XYZ[ii]-r,XYZt[ii]-r)<0) or (max(XYZ[ii]+r,XYZt[ii]+r)>=imageShape[ii]):
+                            if (min(XYZ[ii]-r-sPR,XYZt[ii]-r-sPR)<0) or (max(XYZ[ii]+r+sPR,XYZt[ii]+r+sPR)>=imageShape[ii]):
                                 getOut=1
                         if getOut==1:
                             break
                         
-                        patchSegMap=getSubArrayByRadius(segMap,XYZt,r)
+                        subPatchSegMap=getSubArrayByRadius(segMap,XYZt,r)
                         patchFilter1=np.zeros((2*maxRad+1,2*maxRad+1,2*maxRad+1),dtype=np.bool)
                         drawSphere(patchFilter1,maxRad,maxRad,maxRad,r)
                         patchFilter=np.logical_xor(patchFilter0,patchFilter1)
-                        p1=getSubArrayByRadius(testVolume,XYZ,r)
-                        p2=getSubArrayByRadius(trainingBrain,XYZt,r)
                         subPatchFilter=getSubArrayByRadius(patchFilter,[maxRad,maxRad,maxRad],r)
-                        f=patchSegMap*subPatchFilter
+                        f=subPatchSegMap*subPatchFilter
                         if np.sum(f)>0:
-                            p1U=p1[f]
-                            p2U=p2[f]
-                            c=comparePatch(p1U,p2U) 
-    #                        if c!=0:
-    #                            print('hey')
-                            cCompilation[k,i,r]=c
-                            transferedSeg[XYZ[0]-r:XYZ[0]+r+1,XYZ[1]-r:XYZ[1]+r+1,XYZ[2]-r:XYZ[2]+r+1]=c*f +transferedSeg[XYZ[0]-r:XYZ[0]+r+1,XYZ[1]-r:XYZ[1]+r+1,XYZ[2]-r:XYZ[2]+r+1]
+                            pC=np.argwhere(f) #patch coordinate
+                            cSum=0
+                            for ii in range(np.sum(f)):
+                                #compares 2 patches from testVollume and trainingBrain
+                                #index goes to XYZ (point of comparison) -> - radius of subPatchFilters -> + coordinate in those patch 
+                                #then make a cube around this point of radius sPR
+                                c=comparePatch(testVolume[XYZ[0]-r+pC[0]-sPR:XYZ[0]-r+pC[0]+sPR+1,
+                                                          XYZ[1]-r+pC[1]-sPR:XYZ[1]-r+pC[1]+sPR+1,
+                                                          XYZ[2]-r+pC[2]-sPR:XYZ[2]-r+pC[2]+sPR+1],
+                                               trainingBrain[XYZt[0]-r+pC[0]-sPR:XYZt[0]-r+pC[0]+sPR+1,
+                                                             XYZt[1]-r+pC[1]-sPR:XYZt[1]-r+pC[1]+sPR+1,
+                                                             XYZt[2]-r+pC[2]-sPR:XYZt[2]-r+pC[2]+sPR+1]) 
+                                c=(1/np.sq(2*np.pi*intVar))*np.exp(-c*c/(2*intVar))
+                                cSum+=c
+                                transferedSeg[XYZ[0]-r+pC[0],XYZ[1]-r+pC[1],XYZ[2]-r+pC[2]]=c+transferedSeg[XYZ[0]-r+pC[0],XYZ[1]-r+pC[1],XYZ[2]-r+pC[2]]
+                            cAvg=cSum/np.sum(f)
                         patchFilter0=patchFilter1
                         r+=bandSize
                                                                 
@@ -486,8 +501,7 @@ def doSeg(keyTest,listMatches,mLL,keyTrainingData,trainingAsegPaths,trainingVolu
 #                                if n>0:
 #                                    distSave[j,0]=+np.sum(temp[distArray==j])
 #                                    distSave[j,1]=+n  
-                    if (label==41 or label==42) and np.sum(transferedSeg[135:,:,:])>0:
-                        print('ap')
+
                     lMapProb[:,:,:,labelIndex]+=np.expand_dims(transferedSeg,axis=3)
         print("seg keypoint nb\t",k,'/',keyTest.shape[0])
 

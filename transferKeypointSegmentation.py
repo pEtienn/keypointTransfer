@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+?# -*- coding: utf-8 -*-
 """
 Created on Mon Jun  3 19:10:11 2019
 
@@ -13,7 +13,6 @@ import os
 import shutil
 from datetime import date
 
-np.set_printoptions(precision=2, suppress=True)
 
 """
 Execute the keypoint transfer segmentation algorithm
