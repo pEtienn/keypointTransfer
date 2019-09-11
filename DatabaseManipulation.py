@@ -87,7 +87,7 @@ def SelectLabelInSegmentation(srcPath,outPath,labelToKeep):
         arrayImg = nib.Nifti1Image(outArr, affine)
         nib.save(arrayImg,os.path.join(outPath,f)) 
         
-def GetNumberPatientContainingLabel(srcPath,labelList):
+def GetLabelInPatient(srcPath,labelList):
     """
     Tool to check the presence of some labels in combined segmentation files, 
     or all the labels present if labelList=[]
