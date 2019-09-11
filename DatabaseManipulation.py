@@ -12,8 +12,10 @@ import re
 
 """
 EXAMPLE for CombineSegmentations and SelectLabelInSegmentation
-CombineSegmentation('S:\Anatomy3-trainingset\Segmentations','S:\Anatomy3-trainingset\newSegmentations')
-SelectLabelInSegmentation('S:\Anatomy3-trainingset\newSegmentations',S:\Anatomy3-trainingset\selectedSegmentations,[29663,29662,30325,30324])
+srcPath='S:/Anatomy3-trainingset/segTest'
+CombineSegmentations(srcPath,srcPath+'New')
+SelectLabelInSegmentation(srcPath+'New',srcPath+'NewSelectedLabel',[29663,29662,30325,30324])
+GetNumberPatientContainingLabel(srcPath+'NewSelectedLabel',[]) #to check if the labels were present and copied
 """
 
 def CombineSegmentations(srcPath,outPath):
@@ -35,10 +37,10 @@ def CombineSegmentations(srcPath,outPath):
     for f in allF: 
         shortName=rVolumeID.findall(f)[0]
         if shortName!=unreadableFile:
-            outputName=outPath+shortName+'.nii.gz'
+            outputName=os.path.join(outPath,shortName+'.nii.gz')
             try:
                 if previousOutput!=outputName:
-                    img=nib.load(srcPath+f)
+                    img=nib.load(os.path.join(srcPath,f))
                     h=img.header
                     shape=h.get_data_shape()   
                     if previousOutput!=' ' and shortName!=unreadableFile:
@@ -47,7 +49,7 @@ def CombineSegmentations(srcPath,outPath):
                         nib.save(arrayImg,previousOutput) 
                     segArray=np.zeros(shape)
                 else:
-                    img=nib.load(srcPath+f)
+                    img=nib.load(os.path.join(srcPath,f))
                 arr=img.get_fdata()
                 uni=np.unique(arr)
                 if np.shape(uni)[0]>1:
@@ -77,13 +79,13 @@ def SelectLabelInSegmentation(srcPath,outPath,labelToKeep):
     affine = np.diag([1, 2, 3, 1])
     allF=os.listdir(srcPath)
     for f in allF: 
-        img=nib.load(srcPath+f)
+        img=nib.load(os.path.join(srcPath,f))
         arr=img.get_fdata()
         outArr=np.zeros(arr.shape)
         for i in range(len(labelToKeep)):
             outArr=outArr+(arr==labelToKeep[i])*labelToKeep[i]
         arrayImg = nib.Nifti1Image(outArr, affine)
-        nib.save(arrayImg,outPath+f) 
+        nib.save(arrayImg,os.path.join(outPath,f)) 
         
 def GetNumberPatientContainingLabel(srcPath,labelList):
     """
@@ -98,7 +100,7 @@ def GetNumberPatientContainingLabel(srcPath,labelList):
     """
     allF=os.listdir(srcPath)
     for f in allF: 
-        img=nib.load(srcPath+f)
+        img=nib.load(os.path.join(srcPath,f))
         arr=img.get_fdata()
         print (f,end=" ")
         if not labelList :
