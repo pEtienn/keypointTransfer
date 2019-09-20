@@ -41,31 +41,31 @@ def CombineSegmentations(srcPath,outPath):
             outputName=os.path.join(outPath,shortName+'.nii.gz')
             try:
                 img=nib.load(os.path.join(srcPath,f))
-                failLoading=0
+                arr=img.get_fdata()
+
             except:
                 print('problem loading '+f+', skipping '+shortName)
                 unreadableFile=shortName
-                failLoading=1
+
                 
-            if failLoading==0:
+            if shortName!=unreadableFile:
                 if previousOutput!=outputName:
-                    img=nib.load(os.path.join(srcPath,f))
                     h=img.header
                     shape=h.get_data_shape()   
-                    if previousOutput!=' ' and shortName!=unreadableFile:
+                    if previousOutput!=' ' and previousOutput!= os.path.join(outPath,unreadableFile+'.nii.gz'):
                         print(previousOutput)
                         arrayImg = nib.Nifti1Image(segArray, affine)
                         nib.save(arrayImg,previousOutput) 
                     segArray=np.zeros(shape)
-                else:
-                    img=nib.load(os.path.join(srcPath,f))
-                arr=img.get_fdata()
+                
                 uni=np.unique(arr)
-                if np.shape(uni)[0]>1:
+                if np.shape(uni)[0]==2:
                     k=rLabelNumber.findall(f)[0][1]
                     n=int(k)
                     if uni[1]!=n:  
                         arr=arr*n
+                else:
+                    arr=0
                 segArray=segArray+arr
         previousOutput=outputName
     
@@ -134,5 +134,3 @@ def GetLabelInPatient(srcPath,labelList):
                         allLabels[allLabels[:,0]==l,1]+=1
         print(' ')
     return allLabels[allLabels[:,0].argsort()]
-
-#CombineSegmentations(srcPath,srcPath+'New')
