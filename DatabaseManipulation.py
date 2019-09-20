@@ -34,11 +34,20 @@ def CombineSegmentations(srcPath,outPath):
     unreadableFile=' '
     previousOutput=' '
     affine = np.diag([1, 2, 3, 1])
+
     for f in allF: 
         shortName=rVolumeID.findall(f)[0]
         if shortName!=unreadableFile:
             outputName=os.path.join(outPath,shortName+'.nii.gz')
             try:
+                img=nib.load(os.path.join(srcPath,f))
+                failLoading=0
+            except:
+                print('problem loading '+f+', skipping '+shortName)
+                unreadableFile=shortName
+                failLoading=1
+                
+            if failLoading==0:
                 if previousOutput!=outputName:
                     img=nib.load(os.path.join(srcPath,f))
                     h=img.header
@@ -53,19 +62,18 @@ def CombineSegmentations(srcPath,outPath):
                 arr=img.get_fdata()
                 uni=np.unique(arr)
                 if np.shape(uni)[0]>1:
-                    if uni[1]==1:
-                        k=rLabelNumber.findall(f)[0][1]
-                        n=int(k[0])
+                    k=rLabelNumber.findall(f)[0][1]
+                    n=int(k)
+                    if uni[1]!=n:  
                         arr=arr*n
                 segArray=segArray+arr
-            except:
-                print('problem loading '+f+', skipping '+shortName)
-                unreadableFile=shortName
-
         previousOutput=outputName
+    
     if shortName!=unreadableFile:
         arrayImg = nib.Nifti1Image(segArray, affine)
         nib.save(arrayImg,outputName) 
+        
+    print(previousOutput)
 
 def SelectLabelInSegmentation(srcPath,outPath,labelToKeep):
     """
@@ -97,21 +105,34 @@ def GetLabelInPatient(srcPath,labelList):
             or empty, to show all the labels present in each file
      *** OUTPUT ***
     The present labels will be shown on the console after the name of the file
+    allLabels: matrix n*2, 
+            colums: labelNb | nb Of Patient With That Label     
     """
+    np.set_printoptions(precision=3)
     allF=os.listdir(srcPath)
+    allLabels=np.zeros((1,2),dtype=np.int64)
+
     for f in allF: 
         img=nib.load(os.path.join(srcPath,f))
         arr=img.get_fdata()
         print (f,end=" ")
         if not labelList :
             u=np.unique(arr)
-            for i in u:
-                print(i,end=" ")
+            for l in u:
+                print(l,end=" ")
+                if np.sum(l==allLabels[:,0],0)==0:
+                    allLabels=np.concatenate((allLabels,np.array([[int(l),1]])),axis=0)
+                else:
+                    allLabels[allLabels[:,0]==l,1]+=1
         else:
             for l in labelList:
                 if np.sum(arr==l)!=0:
                     print(l,end=" ")
+                    if np.sum(l==allLabels[:,0],0)==0:
+                        allLabels=np.concatenate((allLabels,np.array([[int(l),1]])),axis=0)
+                    else:
+                        allLabels[allLabels[:,0]==l,1]+=1
         print(' ')
+    return allLabels[allLabels[:,0].argsort()]
 
-                
-            
+#CombineSegmentations(srcPath,srcPath+'New')
