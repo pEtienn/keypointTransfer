@@ -36,7 +36,9 @@ def CombineSegmentations(srcPath,outPath):
     affine = np.diag([1, 2, 3, 1])
 
     for f in allF: 
+        
         shortName=rVolumeID.findall(f)[0]
+
         if shortName!=unreadableFile:
             outputName=os.path.join(outPath,shortName+'.nii.gz')
             try:
@@ -54,6 +56,8 @@ def CombineSegmentations(srcPath,outPath):
                     shape=h.get_data_shape()   
                     if previousOutput!=' ' and previousOutput!= os.path.join(outPath,unreadableFile+'.nii.gz'):
                         print(previousOutput)
+                        if previousOutput==os.path.join(outPath,'10000083_3_MRT1_wb.nii.gz'):
+                            print('oups')
                         arrayImg = nib.Nifti1Image(segArray, affine)
                         nib.save(arrayImg,previousOutput) 
                     segArray=np.zeros(shape)
@@ -63,10 +67,10 @@ def CombineSegmentations(srcPath,outPath):
                     k=rLabelNumber.findall(f)[0][1]
                     n=int(k)
                     if uni[1]!=n:  
-                        arr=arr*n
+                        arr=(arr>0)*n
                 else:
                     arr=0
-                segArray=segArray+arr
+                segArray=segArray+arr*(segArray==0)
         previousOutput=outputName
     
     if shortName!=unreadableFile:
@@ -133,4 +137,6 @@ def GetLabelInPatient(srcPath,labelList):
                     else:
                         allLabels[allLabels[:,0]==l,1]+=1
         print(' ')
+        if np.sum(allLabels==256)>0:
+            pass
     return allLabels[allLabels[:,0].argsort()]
