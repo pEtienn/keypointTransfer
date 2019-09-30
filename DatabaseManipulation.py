@@ -4,15 +4,15 @@ Created on Tue Aug 13 20:51:52 2019
 
 @author: Etenne Pepyn
 """
-
 import os
+from pathlib import Path
 import numpy as np 
 import nibabel as nib
 import re
 
 """
 EXAMPLE for CombineSegmentations and SelectLabelInSegmentation
-srcPath='S:/Anatomy3-trainingset/segTest'
+srcPath=r'S:/Anatomy3-trainingset/segTest'
 CombineSegmentations(srcPath,srcPath+'New')
 SelectLabelInSegmentation(srcPath+'New',srcPath+'NewSelectedLabel',[29663,29662,30325,30324])
 GetNumberPatientContainingLabel(srcPath+'NewSelectedLabel',[]) #to check if the labels were present and copied
@@ -29,7 +29,7 @@ def CombineSegmentations(srcPath,outPath):
 
     rLabelNumber=re.compile('(wb|Ab)_([0-9]+)_')
     rVolumeID=re.compile('(^.+[wb|Ab])_')
-    
+    srcPath=str(Path(srcPath))
     allF=os.listdir(srcPath)
     unreadableFile=' '
     previousOutput=' '

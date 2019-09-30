@@ -5,8 +5,8 @@ from scipy.ndimage import zoom
 import nibabel as nib
 import utilities as ut
 from numba import guvectorize,float64,int64
-import numpy as np
 from numpy import linalg as LA
+
 
 #COMMENT TEMPLATE
 """
@@ -323,7 +323,7 @@ def findBestPatchMatch(image,patch,target,radius,bestMatch):
                     bestDiff=diff
                     bestMatch[:]=[x,y,z]
                     
-def comparePatch(p1,p2):
+def ComparePatchDOT(p1,p2):
     p1Avg=np.average(p1)
     p2Avg=np.average(p2)
     np1=p1.flatten()
@@ -332,10 +332,21 @@ def comparePatch(p1,p2):
     t2=np2-p2Avg
     np1=(t1)/LA.norm(t1)
     np2=(t2)/LA.norm(t2)
-    diff=np.dot(np1,np2)
-    if np.isnan(diff):
+    dotP=np.dot(np1,np2)
+    if np.isnan(dotP):
         print('nan in comparePatch')
-    return diff
+        print(np.average(t1),   LA.norm(t1))
+    return (1-dotP)
+
+def ComparePatchSUM(p1,p2,v1,v2):
+    p1Avg=np.average(p1)
+    p2Avg=np.average(p2)
+    p1=np.power(p1-p1Avg,2)
+    p2=np.power(p2-p2Avg,2)
+    c=np.sum(p1)/(v1*p1.size)-np.sum(p2)/(v2*p1.size)
+    return c
+    
+    
     
 def fill(array2D,y0):
     for x in range(array2D.shape[0]):
@@ -408,6 +419,7 @@ def doSeg(keyTest,listMatches,mLL,keyTrainingData,trainingAsegPaths,trainingVolu
     labelList=np.unique(mLL)
     nbLabel=labelList.shape[0]
     imageShape=testVolume.shape
+    testVar=np.var(testVolume[testVolume>0])
     lMapProb=np.zeros((imageShape[0],imageShape[1],imageShape[2],nbLabel),dtype=np.float32)
     maxDist=np.max(np.shape(lMapProb))
     distSave=np.zeros((maxDist,2))
@@ -458,7 +470,7 @@ def doSeg(keyTest,listMatches,mLL,keyTrainingData,trainingAsegPaths,trainingVolu
                     getOut=0
                     bandSize=3
                     cAvg=1
-                    intVar=np.var(trainingImage)
+                    intVar=np.var(trainingImage[trainingImage>0])
                     while  cAvg>=0.001 and r<maxRad-bandSize:
                         #check if current patch is out of bound of image, stops if it is
                         for ii in range(3):
@@ -480,15 +492,16 @@ def doSeg(keyTest,listMatches,mLL,keyTrainingData,trainingAsegPaths,trainingVolu
                                 #compares 2 patches from testVollume and trainingBrain
                                 #index goes to XYZ (point of comparison) -> - radius of subPatchFilters -> + coordinate in those patch 
                                 #then make a cube around this point of radius sPR
-                                c=comparePatch(testVolume[XYZ[0]-r+pC[0]-sPR:XYZ[0]-r+pC[0]+sPR+1,
-                                                          XYZ[1]-r+pC[1]-sPR:XYZ[1]-r+pC[1]+sPR+1,
-                                                          XYZ[2]-r+pC[2]-sPR:XYZ[2]-r+pC[2]+sPR+1],
-                                               trainingBrain[XYZt[0]-r+pC[0]-sPR:XYZt[0]-r+pC[0]+sPR+1,
-                                                             XYZt[1]-r+pC[1]-sPR:XYZt[1]-r+pC[1]+sPR+1,
-                                                             XYZt[2]-r+pC[2]-sPR:XYZt[2]-r+pC[2]+sPR+1]) 
-                                c=(1/np.sq(2*np.pi*intVar))*np.exp(-c*c/(2*intVar))
+                                c=ComparePatchSUM(testVolume[XYZ[0]-r+pC[ii,0]-sPR:XYZ[0]-r+pC[ii,0]+sPR+1,
+                                                          XYZ[1]-r+pC[ii,1]-sPR:XYZ[1]-r+pC[ii,1]+sPR+1,
+                                                          XYZ[2]-r+pC[ii,2]-sPR:XYZ[2]-r+pC[ii,2]+sPR+1],
+                                               trainingBrain[XYZt[0]-r+pC[ii,0]-sPR:XYZt[0]-r+pC[ii,0]+sPR+1,
+                                                             XYZt[1]-r+pC[ii,1]-sPR:XYZt[1]-r+pC[ii,1]+sPR+1,
+                                                             XYZt[2]-r+pC[ii,2]-sPR:XYZt[2]-r+pC[ii,2]+sPR+1],testVar,intVar) 
+                                c=(1/np.sqrt(2*np.pi*intVar))*np.exp(-c*c/(2*intVar))
                                 cSum+=c
-                                transferedSeg[XYZ[0]-r+pC[0],XYZ[1]-r+pC[1],XYZ[2]-r+pC[2]]=c+transferedSeg[XYZ[0]-r+pC[0],XYZ[1]-r+pC[1],XYZ[2]-r+pC[2]]
+                                transferedSeg[XYZ[0]-r+pC[ii,0],XYZ[1]-r+pC[ii,1],XYZ[2]-r+pC[ii,2]]\
+                                =c+transferedSeg[XYZ[0]-r+pC[ii,0],XYZ[1]-r+pC[ii,1],XYZ[2]-r+pC[ii,2]]
                             cAvg=cSum/np.sum(f)
                         patchFilter0=patchFilter1
                         r+=bandSize
