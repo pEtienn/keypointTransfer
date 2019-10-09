@@ -30,6 +30,7 @@ def CombineSegmentations(srcPath,outPath):
     rLabelNumber=re.compile('(wb|Ab)_([0-9]+)_')
     rVolumeID=re.compile('(^.+[wb|Ab])_')
     srcPath=str(Path(srcPath))
+    outPath=str(Path(outPath))
     allF=os.listdir(srcPath)
     unreadableFile=' '
     previousOutput=' '
@@ -39,7 +40,7 @@ def CombineSegmentations(srcPath,outPath):
         shortName=rVolumeID.findall(f)[0]
 
         if shortName!=unreadableFile:
-            outputName=str(Path(os.path.join(outPath,shortName+'.nii.gz')))
+            outputName=(os.path.join(outPath,shortName+'.nii.gz'))
             try:
                 img=nib.load(os.path.join(srcPath,f))
                 arr=img.get_fdata()
@@ -57,7 +58,7 @@ def CombineSegmentations(srcPath,outPath):
                     if previousOutput!=' ' and previousOutput!= os.path.join(outPath,unreadableFile+'.nii.gz'):
 
                         print(previousOutput)
-                        if previousOutput==str(Path(os.path.join(outPath,'10000083_3_MRT1_wb.nii.gz'))):
+                        if previousOutput==(os.path.join(outPath,'10000083_3_MRT1_wb.nii.gz')):
                             print('oups')
                         arrayImg = nib.Nifti1Image(segArray, affine)
 

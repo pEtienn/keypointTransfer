@@ -67,7 +67,7 @@ def getNiiData(niiPath):
     return data (in our case a 3D numpy array)
     """
     img=nib.load(niiPath)
-    return np.float32(img.get_fdata())
+    return np.float32(np.squeeze(img.get_fdata()))
     
     
 
