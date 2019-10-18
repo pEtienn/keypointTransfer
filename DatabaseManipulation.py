@@ -143,3 +143,81 @@ def GetLabelInPatient(srcPath,labelList):
         if np.sum(allLabels==256)>0:
             pass
     return allLabels[allLabels[:,0].argsort()]
+
+def GetCropBoundaries(path):
+    path=str(Path(path))
+    allF=os.listdir(path)
+    bestXYZ=np.zeros((3,2),dtype=np.int64)
+    for f in allF:
+        img=nib.load(os.path.join(path,f))
+        arr=np.float32(np.squeeze(img.get_fdata()))
+        a=np.nonzero(arr)
+        XYZ=np.zeros((3,2),dtype=np.int64)
+        for i in range(3):
+            XYZ[i,0]=np.min(a[i])
+            XYZ[i,1]=np.max(a[i])+1
+#        print(XYZ)
+        print(arr.shape)
+        if np.sum(bestXYZ[:,0])==0:
+            bestXYZ[:,0]=XYZ[:,0]
+        else:
+            bestXYZ[:,0]=np.minimum(bestXYZ[:,0],XYZ[:,0])
+        bestXYZ[:,1]=np.maximum(bestXYZ[:,1],XYZ[:,1])
+    return bestXYZ
+
+def Crop(srcPath,outPath,XYZ,margin=[0,0,0],decompress=True):
+    """
+    Crop all images in path
+    XYZ: output from GetCropBoundaries
+    Margin: [x,y,z] margin to add to the boudary boxes, the margin will be added 2 times on each axis
+    *** OUTPUT ***
+     modify directly the images
+     """
+    srcPath=str(Path(srcPath))
+    allF=os.listdir(srcPath) 
+    for f in allF:
+        img=nib.load(os.path.join(srcPath,f))
+        arr=np.int16(np.squeeze(img.get_fdata()))
+        nh=img.header
+        newArr=arr[XYZ[0,0]-margin[0]:XYZ[0,1]+margin[0],
+                   XYZ[1,0]-margin[1]:XYZ[1,1]+margin[1],
+                   XYZ[2,0]-margin[2]:XYZ[2,1]+margin[2],]
+        imgv2=nib.Nifti1Image(newArr,affine=None,header=nh)
+        if decompress==True:
+            nib.save(imgv2,os.path.join(outPath,f[:-3]))
+        else:
+            nib.save(imgv2,os.path.join(outPath,f))
+            
+def Rename(srcPath,suffix,extension='.nii.gz',numberDetectionRegex='^[0-9]*([0-9]{4})_'):
+    rPatientNumber=re.compile(numberDetectionRegex)
+    srcPath=str(Path(srcPath))
+    allF=os.listdir(srcPath) 
+    for f in allF:
+        num=rPatientNumber.findall(f)[0]
+        os.rename(os.path.join(srcPath,f),os.path.join(srcPath,num+suffix+extension))
+        
+def GetCorrespondingVolumes(volumesPath,outPath,labelPath,volumeID='^(.+)[wb|Ab]'):
+    rVolumeID=re.compile(volumeID)
+    volumesPath=str(Path(volumesPath))
+    outPath=str(Path(outPath))
+    labelPath=str(Path(labelPath))
+    
+    allHdrF=os.listdir(volumesPath)
+    allLabelF=os.listdir(labelPath) #we take only hdr files that also have a label
+    for f in allLabelF:
+        num=rVolumeID.findall(f)[0]
+        hdrF=[x for x in allHdrF if (num in x)][0]
+        img=nib.load(os.path.join(volumesPath,hdrF))
+        nib.save(img,os.path.join(outPath,hdrF))
+        
+def StandardizeLabels(srcPath,outPath,labels):
+    srcPath=str(Path(srcPath))
+    allF=os.listdir(srcPath) 
+    for f in allF:
+        img=nib.load(os.path.join(srcPath,f))
+        arr=np.int16(np.squeeze(img.get_fdata()))
+        nh=img.header
+        for i in range(len(labels)):
+            arr[arr==labels[i]]=i
+        imgv2=nib.Nifti1Image(arr,affine=None,header=nh)
+        nib.save(imgv2,os.path.join(outPath,f))
