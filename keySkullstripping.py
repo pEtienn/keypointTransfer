@@ -11,39 +11,10 @@ import nibabel as nib
 import re
 import utilities as ut
 import keypointTransfer as kt
+import KSlibrary as ks
 
-
-
-
+#***********************PATHS AND KEYS
 kIP=kt.keyInformationPosition()
-
-def CreateMaskKeyFiles(maskP,keyTestP,keyMaskP):
-    maskF=os.listdir(maskP)
-    keyTestF=os.listdir(keyTestP)
-    for f in maskF:
-        s1='_masked_gfc_reg.hdr'
-        if s1 in f:
-            n=f[:9]
-            print(n)
-            keyTestFP=os.path.join(keyTestP,next(x for x in keyTestF if n in x))
-            maskFP=os.path.join(maskP,f)
-            keyMaskFP=os.path.join(keyMaskP,f[:-3]+'key')
-            mat=ut.getKeypointFromOneFile(keyTestFP)
-            fW = open(keyMaskFP,"w", newline="\n")
-            fR = open(keyTestFP,"r")
-            for i in range(6):
-                fW.write(fR.readline())
-            
-            img=nib.load(maskFP)
-            arr=np.squeeze(img.get_fdata())>0
-            for i in range(mat.shape[0]):
-                if arr[tuple(np.int32(mat[i,kIP.XYZ]))]==True:
-                    fW.write(fR.readline())
-    
-    fW.close()
-    fR.close()
-
-
 
 testP=str(Path(r"S:\skullStripData\test"))
 maskP=str(Path(r"S:\skullStripData\mask"))
@@ -73,9 +44,9 @@ maskPaths=allMaskPaths[start:end]
 keyMaskPaths=allKeyMaskPaths[start:end]
 
 testVolume=kt.getNiiData([x for x in allTestPaths if patientName in x][0])
-keyTest=ut.getKeypointFromOneFile([x for x in allKeyTestPaths if patientName in x][0])
 truth=ut.getKeypointFromOneFile([x for x in allKeyMaskPaths if patientName in x][0])
-
+keyTestPath=[x for x in allKeyTestPaths if patientName in x][0]
+[keyTest,resolutionTest,h]=ks.GetKeypointsResolutionHeader(keyTestPath)
 
 allKey=[]
 for i in range(start,end):
@@ -89,7 +60,7 @@ for i in range(len(maskPaths)):
         y=1
 keyTrainingData=allKey
 
-
+#******************BEST MATCH SELECTION
 allMatches=kt.keypointDescriptorMatch(keyTest,keyTrainingData)
 nbTrainingData=len(keyTrainingData)
 listMatches=kt.matchDistanceSelection(allMatches,keyTest,keyTrainingData)
@@ -106,41 +77,11 @@ for i in range(len(listMatches)):
     varPerMatches[i]=np.var(matchedXYZDifference[:,0])+np.var(matchedXYZDifference[:,1])+np.var(matchedXYZDifference[:,2]) #TO IMPROVE
     [unused,dXYZ[i,:]]=kt.houghTransformGaussian(matchedXYZDifference)
 
-order=np.argsort(varPerMatches)
-maskToKeep=5 #TO IMPROVE
-dXYZ=np.int32(dXYZ)
-
-firstMask=kt.getNiiData(maskPaths[order[0]])>0
-marginXYZ=np.int32(2*np.amax(np.abs(dXYZ),axis=0))
-maskCombined=np.zeros((firstMask.shape[0]+2*marginXYZ[0],firstMask.shape[1]+2*marginXYZ[1],firstMask.shape[2]+2*marginXYZ[2]))
-tempMask=np.zeros((firstMask.shape[0]+2*marginXYZ[0],firstMask.shape[1]+2*marginXYZ[1],firstMask.shape[2]+2*marginXYZ[2]))
-maskCombined[marginXYZ[0]+dXYZ[order[0],0]:marginXYZ[0]+dXYZ[order[0],0]+firstMask.shape[0],
-             marginXYZ[1]+dXYZ[order[0],1]:marginXYZ[1]+dXYZ[order[0],1]+firstMask.shape[1],
-             marginXYZ[2]+dXYZ[order[0],2]:marginXYZ[2]+dXYZ[order[0],2]+firstMask.shape[2]]+=firstMask
-for i in range(1,maskToKeep):
-    tempMask=np.zeros((firstMask.shape[0]+2*marginXYZ,firstMask.shape[1]+2*marginXYZ,firstMask.shape[2]+2*marginXYZ[2]))
-    tempMask[marginXYZ[0]+dXYZ[order[i],0]:marginXYZ[0]+dXYZ[order[i],0]+firstMask.shape[0],
-             marginXYZ[1]+dXYZ[order[i],1]:marginXYZ[1]+dXYZ[order[i],1]+firstMask.shape[1],
-             marginXYZ[2]+dXYZ[order[i],2]:marginXYZ[2]+dXYZ[order[i],2]+firstMask.shape[2]]=kt.getNiiData(maskPaths[order[i]])>0
-    maskCombined=np.logical_and(maskCombined,tempMask)
-    
-finalMask=maskCombined[marginXYZ[0]:marginXYZ[0]+firstMask.shape[0],
-             marginXYZ[1]:marginXYZ[1]+firstMask.shape[1],
-             marginXYZ[2]:marginXYZ[2]+firstMask.shape[2]]
-
-
-
-keyTestFP=[x for x in allKeyTestPaths if patientName in x][0]
-keyMaskFP=resultP
-mat=ut.getKeypointFromOneFile(keyTestFP)
-fW = open(keyMaskFP,"w", newline="\n")
-fR = open(keyTestFP,"r")
-for i in range(6):
-    fW.write(fR.readline())
-arr=finalMask
-for i in range(mat.shape[0]):
-    if arr[tuple(np.int32(mat[i,kIP.XYZ]))]==True:
-        fW.write(fR.readline())
-
-fW.close()
-fR.close()
+brainMask=ks.CreateCombinedMask(maskPaths,varPerMatches,dXYZ,resolutionTest)
+skullMask=ks.CreateCombinedMask(maskPaths,varPerMatches,dXYZ,resolutionTest,brainMask=False) # skull and background ==1
+marginMask=~(brainMask+skullMask)
+#**************Filtering Keypoints
+keyBrain=ks.FilterKeysWithMask(keyTest,brainMask)
+keyMargin=ks.FilterKeysWithMask(keyTest,marginMask)
+keySkull=ks.FilterKeysWithMask(keyTest,skullMask)
+[keyTrue,r,h]=ks.GetKeypointsResolutionHeader([x for x in allKeyMaskPaths if patientName in x][0])
