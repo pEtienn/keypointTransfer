@@ -116,6 +116,13 @@ def FilterKeysWithMask(k,mask):
     k2=k2[~np.all(k2==0,axis=1)]
     return k2
 
+def SubstractKeyImages(positive,negative):
+    for i in range(positive.shape[0]):
+        if np.sum(np.all(negative==positive[i,:],axis=1))==1:
+            positive[i,:]=0
+    positive=positive[~np.all(positive==0,axis=1)]
+    return positive
+
 def CreateMaskKeyFiles(maskP,keyTestP,keyMaskP):
     maskF=os.listdir(maskP)
     keyTestF=os.listdir(keyTestP)

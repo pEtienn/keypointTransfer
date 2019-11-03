@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np 
 import nibabel as nib
 import re
+from numba import guvectorize,float64,int64
 
 """
 EXAMPLE for CombineSegmentations and SelectLabelInSegmentation
@@ -221,3 +222,52 @@ def StandardizeLabels(srcPath,outPath,labels):
             arr[arr==labels[i]]=i
         imgv2=nib.Nifti1Image(arr,affine=None,header=nh)
         nib.save(imgv2,os.path.join(outPath,f))
+        
+def GetDataVolumesInfo(path):
+    srcPath=str(Path(path))
+    allF=os.listdir(srcPath) 
+    for f in allF:
+        img=nib.load(os.path.join(srcPath,f))
+        arr=np.squeeze(img.get_fdata())
+        h=img.header
+        print('shape: ',arr.shape,'\t pixDim: ',h.get_zooms())
+
+
+                    
+                    
+@guvectorize([(float64[:,:,:],float64[:,:,:],float64[:,:,:])], '(x,y,z),(a,b,c)->(a,b,c)',nopython=True)
+def ImResize3D(im,dum,im2):
+    """
+     resizes 3D image using NN
+     REALLY SLOW
+     *** INPUT ***
+    im: image
+    newDim: numpy array containing the new dimensions, XYZ
+     *** OUTPUT ***
+    new resized Image
+    """
+    newDim=np.asarray(dum.shape)
+    oldDim=np.asarray(im.shape)
+    for x in range(newDim[0]):
+        for y in range(newDim[1]):
+            for z in range(newDim[2]):
+                im2[x,y,z]=im[np.int64(np.round_((oldDim[0]-1)/(newDim[0]-1)*x)),np.int64(np.round_((oldDim[1]-1)/(newDim[1]-1)*y)),np.int64(np.round_((oldDim[2]-1)/(newDim[2]-1)*z))]
+                
+def NormalizePixDimensions(folderPath,outPath):
+    path=str(Path(folderPath))
+    outPath=str(Path(outPath))
+    allF=os.listdir(path) 
+    for f in allF:
+        img=nib.load(os.path.join(path,f))
+        arr=np.squeeze(img.get_fdata())
+        h=img.header
+        pixDim=np.asarray(h.get_zooms())
+        oldDim=np.asarray(arr.shape)
+        newDim=np.int64(np.multiply(np.float32(oldDim),pixDim))
+        newArr=np.zeros(newDim)
+        dum=np.copy(newArr)
+        ImResize3D(arr,dum,newArr)
+        h.set_zooms((1,1,1))
+        imgv2=nib.Nifti1Image(newArr,affine=None,header=h)
+        nib.save(imgv2,os.path.join(outPath,f))
+        print(f)

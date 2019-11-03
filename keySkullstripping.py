@@ -18,8 +18,8 @@ kIP=kt.keyInformationPosition()
 
 testP=str(Path(r"S:\skullStripData\test"))
 maskP=str(Path(r"S:\skullStripData\mask"))
-keyMaskP=str(Path(r"S:\skullStripData\keyMask"))
-keyTestP=str(Path(r"S:\skullStripData\keyTest"))
+keyMaskP=str(Path(r"S:\skullStripData\keyMaskMany"))
+keyTestP=str(Path(r"S:\skullStripData\keyTestMany"))
 resultP=str(Path(r"S:\keySkullStripping\results\r1.key"))
 [start,end]=[0,15]
 patientName='0001'
@@ -77,11 +77,41 @@ for i in range(len(listMatches)):
     varPerMatches[i]=np.var(matchedXYZDifference[:,0])+np.var(matchedXYZDifference[:,1])+np.var(matchedXYZDifference[:,2]) #TO IMPROVE
     [unused,dXYZ[i,:]]=kt.houghTransformGaussian(matchedXYZDifference)
 
+
 brainMask=ks.CreateCombinedMask(maskPaths,varPerMatches,dXYZ,resolutionTest)
 skullMask=ks.CreateCombinedMask(maskPaths,varPerMatches,dXYZ,resolutionTest,brainMask=False) # skull and background ==1
+
 marginMask=~(brainMask+skullMask)
 #**************Filtering Keypoints
 keyBrain=ks.FilterKeysWithMask(keyTest,brainMask)
 keyMargin=ks.FilterKeysWithMask(keyTest,marginMask)
 keySkull=ks.FilterKeysWithMask(keyTest,skullMask)
 [keyTrue,r,h]=ks.GetKeypointsResolutionHeader([x for x in allKeyMaskPaths if patientName in x][0])
+keySkullTrue=ks.SubstractKeyImages(keyTest,keyTrue)
+print('brain: ',keyBrain.shape[0])
+print('margin: ',keyMargin.shape[0])
+print('skull: ',keySkull.shape[0])
+print('|true Brain|: ',keyTrue.shape[0])
+print('|true positive|: ',ks.CompareKeyImages(keyBrain,keyTrue))
+print('|false positive|: ',ks.CompareKeyImages(keyBrain,keySkullTrue))
+print('|true negative|: ',ks.CompareKeyImages(keySkull,keySkullTrue))
+print('|false negative|: ' ,ks.CompareKeyImages(keySkull,keyTrue))
+print('brain in margin: ',ks.CompareKeyImages(keyMargin,keyTrue))
+print('skull in margin: ',ks.CompareKeyImages(keyMargin,keySkullTrue))
+trueMask=kt.getNiiData([x for x in allMaskPaths if patientName in x][0])>0
+print('mask dc: ',ut.getDC(brainMask,trueMask,1))
+
+class patientStat:
+    
+    def __init__(self, keyTrueBrain, keyTrueSkull, keySkull, keyMargin, keyBrain,maskBrain,maskSkull,maskTrueBrain):
+        self.mBrain=maskBrain 
+        self.mSkull=maskSkull
+        self.mMargin=~(brainMask+skullMask)
+        
+        self.ktBrain=keyTrueBrain
+        self.ktSkull=keyTrueSkull
+        self.kSkull=keySkull
+        self.kMargin=keyMargin
+        self.kBrain=keyBrain
+        
+    
