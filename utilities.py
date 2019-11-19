@@ -31,7 +31,7 @@ def getStats(a):
         print("Max:",np.max(a[aa]))
         print("Min:",np.min(a[aa]))
         print("Nb:",np.sum(aa))
-        print("Total:",np.sum(a))
+        print("Total:",np.sum(a),'\n')
     
 def getDC(computed,truth,value):
     mapC=computed==value

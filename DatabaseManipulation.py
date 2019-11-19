@@ -10,6 +10,8 @@ import numpy as np
 import nibabel as nib
 import re
 from numba import guvectorize,float64,int64
+import shutil
+import csv
 
 """
 EXAMPLE for CombineSegmentations and SelectLabelInSegmentation
@@ -59,9 +61,8 @@ def CombineSegmentations(srcPath,outPath):
                     if previousOutput!=' ' and previousOutput!= os.path.join(outPath,unreadableFile+'.nii.gz'):
 
                         print(previousOutput)
-                        if previousOutput==(os.path.join(outPath,'10000083_3_MRT1_wb.nii.gz')):
-                            print('oups')
-                        arrayImg = nib.Nifti1Image(segArray, affine)
+                        segArray=np.int32(segArray)
+                        arrayImg = nib.Nifti1Image(segArray,affine=None,header=h)
 
                         nib.save(arrayImg,previousOutput) 
                     segArray=np.zeros(shape)
@@ -78,7 +79,8 @@ def CombineSegmentations(srcPath,outPath):
         previousOutput=outputName
     
     if shortName!=unreadableFile:
-        arrayImg = nib.Nifti1Image(segArray, affine)
+        segArray=np.int32(segArray)
+        arrayImg = nib.Nifti1Image(segArray, affine=None,header=h)
         nib.save(arrayImg,outputName) 
         
     print(previousOutput)
@@ -97,10 +99,11 @@ def SelectLabelInSegmentation(srcPath,outPath,labelToKeep):
     for f in allF: 
         img=nib.load(os.path.join(srcPath,f))
         arr=img.get_fdata()
+        h=img.header
         outArr=np.zeros(arr.shape)
         for i in range(len(labelToKeep)):
             outArr=outArr+(arr==labelToKeep[i])*labelToKeep[i]
-        arrayImg = nib.Nifti1Image(outArr, affine)
+        arrayImg = nib.Nifti1Image(outArr,affine=None,header=h)
         nib.save(arrayImg,os.path.join(outPath,f)) 
         
 def GetLabelInPatient(srcPath,labelList):
@@ -145,11 +148,33 @@ def GetLabelInPatient(srcPath,labelList):
             pass
     return allLabels[allLabels[:,0].argsort()]
 
-def GetCropBoundaries(path):
+def FilterPatientsByLabel(srcPath,outPath,labelList):
+    outPath=str(Path(outPath))
+    srcPath=str(Path(srcPath))
+    allF=os.listdir(srcPath)
+    
+    for f in allF:
+        img=nib.load(os.path.join(srcPath,f))
+        arr=np.squeeze(img.get_fdata())
+        arr2=np.zeros(arr.shape)
+        allPresent=1
+        for i in labelList:
+            if np.sum(arr==i)>0:
+                arr2[arr==i]=arr[arr==i]
+            else:
+                allPresent=0
+                break
+        if allPresent==1:
+            im2=nib.Nifti1Image(arr2,affine=None,header=img.header)
+            nib.save(im2,os.path.join(outPath,f))
+
+def GetCropSize(path):
     path=str(Path(path))
     allF=os.listdir(path)
-    bestXYZ=np.zeros((3,2),dtype=np.int64)
-    for f in allF:
+    maxXYZ=np.zeros((3,2),dtype=np.int64)
+    imageBoxCenter=np.zeros((len(allF),3))
+    for j in range(len(allF)):
+        f=allF[j]
         img=nib.load(os.path.join(path,f))
         arr=np.float32(np.squeeze(img.get_fdata()))
         a=np.nonzero(arr)
@@ -158,15 +183,18 @@ def GetCropBoundaries(path):
             XYZ[i,0]=np.min(a[i])
             XYZ[i,1]=np.max(a[i])+1
 #        print(XYZ)
+        imageBoxCenter[j,:]=np.mean(XYZ,axis=1)
         print(arr.shape)
-        if np.sum(bestXYZ[:,0])==0:
-            bestXYZ[:,0]=XYZ[:,0]
+        sizeXYZ=XYZ[:,1]-XYZ[:,0]
+        if np.sum(maxXYZ)==0:
+            maxXYZ=sizeXYZ
         else:
-            bestXYZ[:,0]=np.minimum(bestXYZ[:,0],XYZ[:,0])
-        bestXYZ[:,1]=np.maximum(bestXYZ[:,1],XYZ[:,1])
-    return bestXYZ
+            maxXYZ=np.maximum(maxXYZ,sizeXYZ)
+    maxXYZ=np.ceil(maxXYZ)
+    maxXYZ=(maxXYZ+maxXYZ%2)/2
+    return [np.int64(maxXYZ), np.int64(imageBoxCenter)]
 
-def Crop(srcPath,outPath,XYZ,margin=[0,0,0],decompress=True):
+def Crop(srcPath,outPath,XYZ,imageBoxCenter,margin=[0,0,0],decompress=True):
     """
     Crop all images in path
     XYZ: output from GetCropBoundaries
@@ -174,15 +202,23 @@ def Crop(srcPath,outPath,XYZ,margin=[0,0,0],decompress=True):
     *** OUTPUT ***
      modify directly the images
      """
+    margin=np.int64(margin)
+    XYZ=np.int64(XYZ)
+    imageBoxCenter=np.int64(imageBoxCenter)
+    outPath=str(Path(outPath))
     srcPath=str(Path(srcPath))
     allF=os.listdir(srcPath) 
-    for f in allF:
+    for i in range(len(allF)):
+        f=allF[i]
         img=nib.load(os.path.join(srcPath,f))
         arr=np.int16(np.squeeze(img.get_fdata()))
         nh=img.header
-        newArr=arr[XYZ[0,0]-margin[0]:XYZ[0,1]+margin[0],
-                   XYZ[1,0]-margin[1]:XYZ[1,1]+margin[1],
-                   XYZ[2,0]-margin[2]:XYZ[2,1]+margin[2],]
+        cubeLimit=np.zeros((3,2))
+        for j in range(3):
+                cubeLimit[j,0]=max(imageBoxCenter[i,j]-XYZ[j]-margin[j],0)
+                cubeLimit[j,1]=min(imageBoxCenter[i,j]+XYZ[j]+margin[j]-1,arr.shape[j]-1)
+        cubeLimit=np.int64(cubeLimit)
+        newArr=arr[cubeLimit[0,0]:cubeLimit[0,1],cubeLimit[1,0]:cubeLimit[1,1],cubeLimit[2,0]:cubeLimit[2,1]]
         imgv2=nib.Nifti1Image(newArr,affine=None,header=nh)
         if decompress==True:
             nib.save(imgv2,os.path.join(outPath,f[:-3]))
@@ -239,10 +275,10 @@ def GetDataVolumesInfo(path):
 def ImResize3D(im,dum,im2):
     """
      resizes 3D image using NN
-     REALLY SLOW
      *** INPUT ***
     im: image
-    newDim: numpy array containing the new dimensions, XYZ
+    dum: dummy array to have dimensions for the output array
+    im2: output array
      *** OUTPUT ***
     new resized Image
     """
@@ -271,3 +307,61 @@ def NormalizePixDimensions(folderPath,outPath):
         imgv2=nib.Nifti1Image(newArr,affine=None,header=h)
         nib.save(imgv2,os.path.join(outPath,f))
         print(f)
+        
+def PrepareData(labelPath,mriPath,outPath,labelList):
+    """
+     prepare data for the dense vnet
+     *** INPUT ***
+    labelPath:path containing result of CombineSegmentation
+    mriPath: path containing needed volumes (or more)
+    outputPath: path to output the prepared data
+    labelList: labels that image in the database must contain
+     *** OUTPUT ***
+    Images in the outputPath ready for the denseVnet
+    normalized pixel dimension
+    All cropped at the same window size
+    Renamed
+    Labels are go from 0 to n
+    
+    """
+    labelPath=str(Path(labelPath))
+    mriPath=str(Path(mriPath))
+    outPath=str(Path(outPath))
+    tFN=10
+    tempPathList=[]
+    for i in range(tFN):
+        tempPathList.append(os.path.join(outPath,'tp'+str(i)))
+        os.makedirs(tempPathList[i])
+    FilterPatientsByLabel(labelPath,tempPathList[0],labelList)
+    GetCorrespondingVolumes(mriPath,tempPathList[1],tempPathList[0])
+    NormalizePixDimensions(tempPathList[0],tempPathList[2])
+    NormalizePixDimensions(tempPathList[1],tempPathList[3])
+    [XYZ,centers]=GetCropSize(tempPathList[2])
+    Crop(tempPathList[2],tempPathList[4],XYZ,centers)
+    Rename(tempPathList[3],'_MRI',extension='.nii.gz')
+    Crop(tempPathList[3],outPath,XYZ,centers)
+    Rename(tempPathList[4],'_Label',extension='.nii')
+    StandardizeLabels(tempPathList[4],outPath,labelList)
+    for i in range(tFN):
+        shutil.rmtree(tempPathList[i])
+    
+    
+    return XYZ
+
+
+def CreateCSVFile(path):
+    regNumber='(^[0-9]{4})_'
+    reg=re.compile(regNumber)
+    path=str(Path(path))
+    csvFile=os.path.join(path,'dataset_split_file.csv')
+    allF=os.listdir(path)
+    previousNumber=''
+    csvData=[]
+    for i in range(len(allF)):
+       patientNumber=reg.findall(allF[i])[0]
+       if patientNumber != previousNumber:
+          csvData.append([patientNumber,'training'])
+    with open(csvFile, 'w',newline='') as csvFile:
+        writer = csv.writer(csvFile)
+        writer.writerows(csvData)
+    csvFile.close()
