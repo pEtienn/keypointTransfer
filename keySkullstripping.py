@@ -21,12 +21,11 @@ from pyflann import *
 kIP=kt.keyInformationPosition()
 allPatient=ks.PatientRepertory()
 
-testP=str(Path(r"S:\skullStripData\test"))
 maskP=str(Path(r"S:\skullStripData\mask"))
-keyMaskP=str(Path(r"S:\skullStripData\keyMaskFew"))
+#keyMaskP=str(Path(r"S:\skullStripData\keyMaskFew"))
+keyMaskP=str(Path(r"S:\skullStripData\newKeyMaskFew"))
 keyTestP=str(Path(r"S:\skullStripData\keyTestFew"))
 resultP=str(Path(r"S:\keySkullStripping\results\r1.key"))
-allTestPaths=ut.listdir_fullpath(testP)
 allMaskPaths=ut.listdir_fullpath(maskP)
 allKeyTestPaths=ut.listdir_fullpath(keyTestP)
 allKeyMaskPaths=ut.listdir_fullpath(keyMaskP)
@@ -39,47 +38,47 @@ patientNames=[]
 for i in allKeyTestPaths:
     patientNames.append(rPatientNumber.findall(i)[0])
 
-for patientName in [patientNames[0]]:#patientNames:
+for patientName in patientNames:#patientNames:
     
     #FILE SELECTION
-    y=0
     z=0
-    ty=allTestPaths
     tz=allMaskPaths
-    for i in range(len(allTestPaths)):
-        if ty[i-y][-3:]=='img':
-            allTestPaths.pop(i-y)
-            y+=1
+    for i in range(len(allMaskPaths)):
         if tz[i-z][-3:]=='img':
             allMaskPaths.pop(i-z)
             z+=1
-
     
     maskPaths=allMaskPaths[start:end]
     keyMaskPaths=allKeyMaskPaths[start:end]
     keyPaths=allKeyTestPaths[start:end]
     
-    testVolume=kt.getNiiData([x for x in allTestPaths if patientName in x][0])
-    truth=ut.getKeypointFromOneFile([x for x in allKeyMaskPaths if patientName in x][0])
+    [keyTruth,resolution,header]=ks.GetKeypointsResolutionHeader([x for x in allKeyMaskPaths if patientName in x][0])
     keyTestPath=[x for x in allKeyTestPaths if patientName in x][0]
-    [keyTest,resolutionTest,h]=ks.GetKeypointsResolutionHeader(keyTestPath)
+    [keyTest,resolutionTest,h]=ks.GetKeypointsResolutionHeader(keyTestPath)   
+    maskTrueBrain=kt.getNiiData([x for x in allMaskPaths if patientName in x][0])>0
+    brainShape=resolution#to change
     
-    brainShape=testVolume.shape #to change
     listTrainingKey=[]
+    listMaskKey=[]
     for i in range(start,end):
-        listTrainingKey.append(ut.getKeypointFromOneFile(keyPaths[i]))
+#        [k,r,h]=ks.GetKeypointsResolutionHeader(keyPaths[i])
+        m=kt.getNiiData(maskPaths[i])>0
+        [keyAll,r,h]=ks.GetKeypointsResolutionHeader(keyPaths[i])
+        kMask=ks.FilterKeysWithMask(keyAll,m)
+        listTrainingKey.append(keyAll)
+        listMaskKey.append(kMask)
     y=0
     for i in range(len(maskPaths)):
         if patientName in maskPaths[i-y]:
             listTrainingKey.pop(i)
+            listMaskKey.pop(i)
             maskPaths.pop(i)
             keyMaskPaths.pop(i)
             keyPaths.pop(i)
             y=1
-    keyTrainingData=listTrainingKey
+
     
-    maskTrueBrain=kt.getNiiData([x for x in allMaskPaths if patientName in x][0])>0
-    
+
     #Generate key data structure
     nbKeys=0
     keyIndexes=np.zeros((len(listTrainingKey),2))
@@ -94,14 +93,14 @@ for patientName in [patientNames[0]]:#patientNames:
     indexCounter=0
     for i in range(len(listTrainingKey)):
         keyToAdd=listTrainingKey[i]
-        brainKey=ut.getKeypointFromOneFile(keyMaskPaths[i])
-        skullKey=ks.SubstractKeyImages(keyToAdd,brainKey)
-        allTrainingKey[indexCounter:indexCounter+brainKey.shape[0],:-1]=np.concatenate((brainKey,np.ones((brainKey.shape[0],1))),axis=1)
-        allTrainingKey[indexCounter:indexCounter+brainKey.shape[0],-1]=i
-        indexCounter+=brainKey.shape[0]
-        allTrainingKey[indexCounter:indexCounter+skullKey.shape[0],:-1]=np.concatenate((skullKey,np.zeros((skullKey.shape[0],1))),axis=1)
-        allTrainingKey[indexCounter:indexCounter+skullKey.shape[0],-1]=i
-        indexCounter+=skullKey.shape[0]
+        keyBrain=listMaskKey[i]
+        keySkull=ks.SubstractKeyImages(keyToAdd,keyBrain)
+        allTrainingKey[indexCounter:indexCounter+keyBrain.shape[0],:-1]=np.concatenate((keyBrain,np.ones((keyBrain.shape[0],1))),axis=1)
+        allTrainingKey[indexCounter:indexCounter+keyBrain.shape[0],-1]=i
+        indexCounter+=keyBrain.shape[0]
+        allTrainingKey[indexCounter:indexCounter+keySkull.shape[0],:-1]=np.concatenate((keySkull,np.zeros((keySkull.shape[0],1))),axis=1)
+        allTrainingKey[indexCounter:indexCounter+keySkull.shape[0],-1]=i
+        indexCounter+=keySkull.shape[0]
     
 
     #***************** NN
@@ -124,24 +123,28 @@ for patientName in [patientNames[0]]:#patientNames:
         distAS=np.squeeze(np.asarray(distS))
         pK[i,1]=np.sum(np.exp(-distAS/(2*np.power(var,2))))
     #*****************
-#    pKSave=pK
-#    pMap=ks.GenerateNormalizedProbabilityMap(np.power(pK,2),keyTest,brainShape)
-#    pK=ks.GetProbabilityKeyFromPMap(pMap,keyTest)
+    #   indexBrain=pK[:,0]>pK[:,1]
     
-#    mask=pMap[:,:,:,0]>pMap[:,:,:,1]
+    pKSave=pK
+    pMap=ks.GenerateNormalizedProbabilityMap(np.power(pK,2),keyTest,brainShape)
+    pK=ks.GetProbabilityKeyFromPMap(pMap,keyTest)
     
-#    keyBrain=ks.FilterKeysWithMask(keyTest,mask)
-#    keySkull=ks.FilterKeysWithMask(keyTest,~mask)
-    #TEMP Classification
-    indexBrain=pK[:,0]>pK[:,1]
-#    indexBrain=ks.ClassifyByRatio(pK)
+    mask=pMap[:,:,:,0]>pMap[:,:,:,1]
+    
+    keyBrain=ks.FilterKeysWithMask(keyTest,mask)
+    keySkull=ks.FilterKeysWithMask(keyTest,~mask)
+    
+#    TEMP Classification
+#    indexBrain=ks.ClassifyByRatio(pK,)
     
     #random tests *************
 #    r=np.random.rand((pK.shape[0]))
 #    indexBrain=(r<=0.95)
-    keyBrain=keyTest[indexBrain]
-    keySkull=keyTest[~indexBrain]
-    patientObject=ks.Patient(keyTest,truth,keyBrain=keyBrain,keySkull=keySkull)
+#*****************************
+    
+#    keyBrain=keyTest[indexBrain]
+#    keySkull=keyTest[~indexBrain]
+    patientObject=ks.Patient(keyTest,keyTruth,keyBrain=keyBrain,keySkull=keySkull)
     allPatient.AddPatient(patientName,patientObject)
     patientObject.PrintStats()
         

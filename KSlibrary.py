@@ -49,7 +49,7 @@ def WriteKeyFile(path,keys,header='default'):
         header="# featExtract 1.1 \n# Extraction Voxel Resolution (ijk) : 176 208 176\
         \nExtraction Voxel Size (mm)  (ijk) : 1.000000 1.000000 1.000000\
         \nFeature Coordinate Space: millimeters (gto_xyz)\nFeatures:" +str(keys.shape[0])+"\
-        \nScale-space location[x y z scale] orientation[o11 o12 o13 o21 o22 o23 o31 o32 o32] 2nd moment eigenvalues[e1 e2 e3] info flag[i1] descriptor[d1 .. d64]"
+        \nScale-space location[x y z scale] orientation[o11 o12 o13 o21 o22 o23 o31 o32 o32] 2nd moment eigenvalues[e1 e2 e3] info flag[i1] descriptor[d1 .. d64]\n"
     fW=open(path,'w',newline='\n')
     fW.write(header)
     for i in range(keys.shape[0]):
@@ -109,21 +109,31 @@ def CompareKeyImages(k1,k2):
                 s+=1
     return s     
 
+def SubstractKeyImages(positive,negative):
+    rest=np.copy(positive)
+    #k=0
+    for i in range(rest.shape[0]):
+        if np.sum(np.all(negative==rest[i,:],axis=1))==1:
+        #if np.sum(np.all(negative==rest[i-k,:],axis=1))==1:
+#            rest=np.delete(rest,i-k,0)
+#            k+=1
+            rest[i,:]=0
+    out=rest[~np.all(rest==0,axis=1)]
+#    out=rest
+    return out
+
 def FilterKeysWithMask(k,mask):
     k2=np.zeros(k.shape)
     for i in range(k.shape[0]):
         if mask[tuple(np.int32(k[i,kIP.XYZ]))]==True:
             k2[i,:]=k[i,:]
     k2=k2[~np.all(k2==0,axis=1)]
+    k3=SubstractKeyImages(k,k2)
+    if (k3.shape[0]+k2.shape[0])!=k.shape[0]:
+        print('problem in FilterKeysWithMask')
     return k2
 
-def SubstractKeyImages(positive,negative):
-    positive=np.copy(positive)
-    for i in range(positive.shape[0]):
-        if np.sum(np.all(negative==positive[i,:],axis=1))==1:
-            positive[i,:]=0
-    positive=positive[~np.all(positive==0,axis=1)]
-    return positive
+
 
 def CreateMaskKeyFiles(maskP,keyTestP,keyMaskP):
     maskF=os.listdir(maskP)
@@ -133,23 +143,27 @@ def CreateMaskKeyFiles(maskP,keyTestP,keyMaskP):
         if s1 in f:
             n=f[:9]
             print(n)
-            keyTestFP=os.path.join(keyTestP,next(x for x in keyTestF if n in x))
+            keyTestFP=os.path.join(keyTestP,[x for x in keyTestF if n in x][0])
             maskFP=os.path.join(maskP,f)
             keyMaskFP=os.path.join(keyMaskP,f[:-3]+'key')
-            mat=ut.getKeypointFromOneFile(keyTestFP)
-            fW = open(keyMaskFP,"w", newline="\n")
-            fR = open(keyTestFP,"r")
-            for i in range(6):
-                fW.write(fR.readline())
-            
+            [k,r,h]=GetKeypointsResolutionHeader(keyTestFP)
             img=nib.load(maskFP)
-            arr=np.squeeze(img.get_fdata())>0
-            for i in range(mat.shape[0]):
-                if arr[tuple(np.int32(mat[i,kIP.XYZ]))]==True:
-                    fW.write(fR.readline())
-    
-    fW.close()
-    fR.close()
+            mask=np.squeeze(img.get_fdata())>0
+            brainK=FilterKeysWithMask(k,mask)
+            WriteKeyFile(keyMaskFP,brainK,header=h)
+#            mat=ut.getKeypointFromOneFile(keyTestFP)
+#            fW = open(keyMaskFP,"w", newline="\n")
+#            fR = open(keyTestFP,"r")
+#            for i in range(6):
+#                fW.write(fR.readline())
+#            
+
+#            for i in range(mat.shape[0]):
+#                if arr[tuple(np.int32(mat[i,kIP.XYZ]))]==True:
+#                    fW.write(fR.readline())
+#    
+#    fW.close()
+#    fR.close()
 
 def GetSubCube(array,lowBound,shapeSubCube):
     """
