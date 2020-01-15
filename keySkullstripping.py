@@ -17,30 +17,38 @@ import KSlibrary as ks
 
 allPatient=ks.PatientRepertory()
 
-keyTestP=str(Path(r"S:\skullStripData\keyTestFew"))
+keyTestP=str(Path(r"S:\originalOASISdata\OASIS_head\key"))
 resultP=str(Path(r"S:\keySkullStripping\results"))
-trainingSetPath=str(Path(r'S:\skullStripData\trainingSet'))
+trainingSetPath=str(Path(r'S:\skullStripData\trainingSet'))#ConsiderScale
 allKeyTestPaths=ut.listdir_fullpath(keyTestP)
 numberDetectionRegex='OAS._([0-9]{4})_'  #detect the number in path following this format:
 #S:\skullStripData\keyMaskMany\OAS1_0002_MR1_mpr_nn_anon_111_t88_masked_gfc_reg.key
 #use of regex will return '0002' on that path
 rPatientNumber=re.compile(numberDetectionRegex)
+listTestNumber=[]
+allTestPath=allKeyTestPaths[0:20]
+for testPath in allTestPath:
+    listTestNumber.append(rPatientNumber.findall(testPath)[0])
 
-for testPath in allKeyTestPaths:
-    testNumber=rPatientNumber.findall(testPath)[0]
-    [testKey,resolution,header]=ks.GetKeypointsResolutionHeader(testPath)
+[brainFilePaths, skullFilePaths]=ks.GenerateFilePaths(trainingSetPath)
+[brainFilePaths, skullFilePaths]=ks.RemoveTestPatientFromFilePaths(listTestNumber,brainFilePaths,skullFilePaths)
+    
+allKey=ks.CombineAllKey(brainFilePaths,skullFilePaths)
+[listFlann,listParam]=ks.GenerateSearchTree(allKey)
+
+for i in range(len(allTestPath)):
+    testPath=allTestPath[i]
+    testNumber=listTestNumber[i]
+    testKey=ks.ReadKeypoints(testPath)
+    [resolution,header]=ks.GetResolutionHeaderFromKeyFile(testPath)
     trueBrainPath=os.path.join(trainingSetPath,'brainKey',[x for x in os.listdir(os.path.join(trainingSetPath,'brainKey')) if testNumber in x][0])
-    [keyTrueBrain,r,h]=ks.GetKeypointsResolutionHeader(trueBrainPath)
+    keyTrueBrain=ks.ReadKeypoints(trueBrainPath)
     
-    [brainFilePaths, skullFilePaths]=ks.GenerateFilePaths(trainingSetPath)
-    [brainFilePaths, skullFilePaths]=ks.RemoveTestPatientFromFilePaths(testNumber,brainFilePaths,skullFilePaths)
-    
-    allKey=ks.CombineAllKey(brainFilePaths,skullFilePaths)
 
-    [keyBrain,keySkull]=ks.SkullStrip(testKey,allKey,len(brainFilePaths),resolution,normalizeProbabilitySpatially=False,patientRepertory=allPatient,
-    keyTrueBrain=keyTrueBrain,patientName=testNumber,doRandomTest=True)
+    [keyBrain,keySkull]=ks.SkullStrip(testKey,listFlann,listParam,len(brainFilePaths),resolution,normalizeProbabilitySpatially=False,patientRepertory=allPatient,
+    keyTrueBrain=keyTrueBrain,patientName=testNumber,doRandomTest=False)
     
-    if False:
+    if True:
         ks.WriteKeyFile(os.path.join(resultP,testNumber+'BrainNormalized.key'),keyBrain,header=header)
         ks.WriteKeyFile(os.path.join(resultP,testNumber+'SkullNormalized.key'),keySkull,header=header)
 

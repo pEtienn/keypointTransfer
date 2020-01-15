@@ -12,6 +12,8 @@ import re
 from numba import guvectorize,float64,int64
 import shutil
 import csv
+from scipy import ndimage
+import utilities as ut
 
 """
 EXAMPLE for CombineSegmentations and SelectLabelInSegmentation
@@ -267,8 +269,6 @@ def GetDataVolumesInfo(path):
         arr=np.squeeze(img.get_fdata())
         h=img.header
         print('shape: ',arr.shape,'\t pixDim: ',h.get_zooms())
-
-
                     
                     
 @guvectorize([(float64[:,:,:],float64[:,:,:],float64[:,:,:])], '(x,y,z),(a,b,c)->(a,b,c)',nopython=True)
@@ -288,7 +288,8 @@ def ImResize3D(im,dum,im2):
         for y in range(newDim[1]):
             for z in range(newDim[2]):
                 im2[x,y,z]=im[np.int64(np.round_((oldDim[0]-1)/(newDim[0]-1)*x)),np.int64(np.round_((oldDim[1]-1)/(newDim[1]-1)*y)),np.int64(np.round_((oldDim[2]-1)/(newDim[2]-1)*z))]
-                
+           
+
 def NormalizePixDimensions(folderPath,outPath):
     path=str(Path(folderPath))
     outPath=str(Path(outPath))
@@ -307,7 +308,73 @@ def NormalizePixDimensions(folderPath,outPath):
         imgv2=nib.Nifti1Image(newArr,affine=None,header=h)
         nib.save(imgv2,os.path.join(outPath,f))
         print(f)
+
+def ApplyFuncToAllImage(srcPath,dstPath,func):
+    srcPath=str(Path(srcPath))
+    dstPath=str(Path(dstPath))
+    allF=os.listdir(srcPath)
+    for i in range(len(allF)):
+        f=allF[i]
+        img=nib.load(os.path.join(srcPath,f))
+        img2=Zoom(img,np.array([120,120,120]))
+        nib.save(img2,os.path.join(dstPath,f))
         
+def Zoom(img,newDimensions):
+        
+        arr=np.squeeze(img.get_fdata())
+        h=img.header
+        pixDim=np.asarray(h.get_zooms())
+        oldDim=np.asarray(arr.shape)
+        zoomValue=oldDim/newDimensions
+        arr2=ndimage.zoom(arr,zoomValue)
+        newPixDim=pixDim*zoomValue
+        h.set_zooms(newPixDim)
+        im2=nib.Nifti1Image(arr2,affine=None,header=h)
+        return im2
+        
+def ZoomAllIm(srcPath,dstPath,newDimensions):
+    srcPath=str(Path(srcPath))
+    dstPath=str(Path(dstPath))
+    allF=os.listdir(srcPath)
+    for i in range(len(allF)):
+        f=allF[i]
+        if 'MRI' in f:
+            img=nib.load(os.path.join(srcPath,f))
+            arr=np.squeeze(img.get_fdata())
+            h=img.header
+            pixDim=np.asarray(h.get_zooms())
+            oldDim=np.asarray(arr.shape)
+            zoomValue=newDimensions/oldDim
+            arr2=ndimage.zoom(arr,zoomValue)
+            newPixDim=pixDim/zoomValue
+            h.set_zooms(newPixDim)
+            im2=nib.Nifti1Image(arr2,affine=None,header=h)
+            nib.save(im2,os.path.join(dstPath,f))
+            print(f)
+
+def ZoomAllLabel(srcPath,dstPath,newDimensions):
+    srcPath=str(Path(srcPath))
+    dstPath=str(Path(dstPath))
+    allF=os.listdir(srcPath)
+    for i in range(len(allF)):
+        f=allF[i]
+        if 'Label' in f:
+            img=nib.load(os.path.join(srcPath,f))
+            arr=np.squeeze(img.get_fdata())
+            h=img.header
+            pixDim=np.asarray(h.get_zooms())
+            oldDim=np.asarray(arr.shape)
+            zoomValue=newDimensions/oldDim
+            newArr=np.zeros(newDimensions)
+            dum=np.copy(newArr)
+            ImResize3D(arr,dum,newArr)
+            newPixDim=pixDim/zoomValue
+            h.set_zooms(newPixDim)
+            im2=nib.Nifti1Image(newArr,affine=None,header=h)
+            nib.save(im2,os.path.join(dstPath,f))
+            print(f)
+
+       
 def PrepareData(labelPath,mriPath,outPath,labelList):
     """
      prepare data for the dense vnet
@@ -365,3 +432,50 @@ def CreateCSVFile(path):
         writer = csv.writer(csvFile)
         writer.writerows(csvData)
     csvFile.close()
+
+def MesureDC(truthPath,predictedPath):
+    truthPath=str(Path(truthPath))
+    predictedPath=str(Path(predictedPath))
+    allF=os.listdir(predictedPath)
+    allSrc=os.listdir(truthPath)
+    for i in range(len(allF)):
+        f=allF[i]
+        if 'nii.gz' in f:
+            number=f[0:4]
+            imgPredicted=nib.load(os.path.join(predictedPath,f))
+            arrPredicted=np.squeeze(imgPredicted.get_fdata())
+            pathSource=os.path.join(truthPath,[x for x in allSrc if ((number in x) and ('Label' in x))][0])
+            imgTruth=nib.load(pathSource)
+            arrTruth=np.round(np.squeeze(imgTruth.get_fdata()))
+            for j in range(np.unique(arrTruth).shape[0]):
+                print('DC ',j,' : ',ut.getDC(arrPredicted,arrTruth,j))
+            print('\n')
+            
+@guvectorize([(int64[:,:,:],int64[:,:,:],int64[:,:,:])], '(x,y,z),(a,b,c)->(a,b,c)',nopython=True)
+def Upsample(im,dummy,imOutPadded):
+    """
+     resizes 3D image using NN
+     *** INPUT ***
+    im: image
+    dum: dummy array to have dimensions for the output array
+    im2: output array
+     *** OUTPUT ***
+    new resized Image
+    """
+    [row,col,deep]=np.asarray(np.shape(im))
+    [row2,col2,deep2]=np.asarray(np.shape(dummy))
+    for i in range(1,row2,2):
+            for j in range(1,col2,2):
+                for k in range(1,deep2,2):
+                    imOutPadded[i,j,k]=im[np.int64(i/2),np.int64(j/2),np.int64(k/2)]
+            
+    for i in range(1,int(row*2)):
+        for j in range(1,int(col*2)):
+            for k in range(1,int(deep*2)):
+                if imOutPadded[i,j,k]==0:
+                    cube=imOutPadded[i-1:i+2,j-1:j+2,k-1:k+2]
+                    u=np.unique(cube)
+                    if u.shape[0]==2:
+                       imOutPadded[i,j,k]= u[1]
+                    else:
+                        imOutPadded[i,j,k]=0
