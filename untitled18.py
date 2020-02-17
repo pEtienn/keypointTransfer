@@ -10,7 +10,7 @@ from numba import guvectorize,float64,int64
 
 
 @guvectorize([(int64[:,:,:],int64[:,:,:],int64[:,:,:])], '(x,y,z),(a,b,c)->(a,b,c)',nopython=True)
-def ReadyFor(im,dummy,imOutPadded):
+def Upsample(im,dummy,imOutPadded):
     """
      resizes 3D image using NN
      *** INPUT ***
