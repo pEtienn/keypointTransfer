@@ -11,11 +11,10 @@ from pathlib import Path
 import numpy as np 
 import nibabel as nib
 import re
-import utilities as ut
-import keypointTransfer as kt
 from scipy.ndimage import gaussian_filter
 from pyflann import *
 import pandas
+from numba import guvectorize,float64,int64
 
 class keyInformationPosition():
     """
@@ -27,9 +26,38 @@ class keyInformationPosition():
     XYZ=slice(0,3,1)
     descriptor=slice(17,81,1)
     flag=16
+    noFlag=[x for x in range(81) if x != 16]
     
 kIP=keyInformationPosition()
 
+def getDC(computed,truth,value):
+    mapC=computed==value
+    mapT=truth==value
+    num=2*np.sum(np.logical_and(mapC,mapT))
+    den=np.sum(mapC)+np.sum(mapT)
+    return num/den
+
+def FilterKeysByClass(keys,classValue):
+    return keys[np.int32(keys[:,kIP.flag])&15==classValue,:]
+
+def FilterKeyByRotation(keys,rotation=False):
+    if rotation==False:
+        return keys[~np.int32(keys[:,kIP.flag])&32==32,:]
+    else:
+        return keys[np.int32(keys[:,kIP.flag])&32==32,:]
+    
+def CreateExtractAllKeyFile(srcPath,nameRegex='^(\d+)'):
+    allF=os.listdir(srcPath)
+    rName=re.compile(nameRegex)
+    Path(os.path.join(srcPath,'key')).mkdir(parents=True, exist_ok=True)
+    fW=open(os.path.join(srcPath,'keyCommand'),'w',newline='\n')
+    for f in allF:
+        if f[-3:]=='hdr' or f[-3:]=='nii' or f[-6:]=='nii.gz':
+            patientNumber=rName.findall(f)[0]
+            s='./featExtract.ubu ./'+f+' ./key/'+patientNumber+'.key\n'
+            fW.write(s)
+    fW.close()
+    
 def ReadImage(filePath):
     filePath=str(Path(filePath))
     img=nib.load(filePath)
@@ -62,16 +90,56 @@ def ReadKeypoints(filePath):
 
     return key
     
-def CombineDescriptorsOfKeyFiles(srcPath,dstPath):
+def RemoveDescriptorsFromFile(filePath,startIndex,endIndex,percentageIndex=True):
+    df=pandas.read_csv(filePath,sep='\t',header=None)
+    if percentageIndex==True:
+        n=df.shape[0]
+        startIndex=int(n*startIndex/100)
+        endIndex=int(n*endIndex/100)
+    d=df[startIndex:endIndex]
+    d.to_csv(filePath, header=None, index=None,sep='\t')
+    
+def CombineDescriptorsBrainAndSkull(srcPath,dstFolder):
     allKeys=os.listdir(srcPath)
-    allDes=np.empty((0,64),dtype=np.int8)
+    allDesBrain=np.empty((0,64),dtype=np.int8)
+    allDesSkull=np.empty((0,64),dtype=np.int8)
     for keyFile in allKeys:
         keys=ReadKeypoints(os.path.join(srcPath,keyFile))
-        des=np.int8(keys[:,kIP.descriptor])
-        allDes=np.append(allDes,des,axis=0)
-        
-    pandas.DataFrame(allDes).to_csv(dstPath+'.des', header=None, index=None,sep='\t')
+        keysBrain=FilterKeysByClass(keys, 1)
+        keysSkull=FilterKeysByClass(keys, 0)
+        desBrain=np.int8(keysBrain[:,kIP.descriptor])
+        desSkull=np.int8(keysSkull[:,kIP.descriptor])
+        allDesBrain=np.append(allDesBrain,desBrain,axis=0)
+        allDesSkull=np.append(allDesSkull,desSkull,axis=0)
+    pandas.DataFrame(allDesBrain).to_csv(os.path.join(dstFolder,'brain'+'.des'), header=None, index=None,sep='\t')
+    pandas.DataFrame(allDesSkull).to_csv(os.path.join(dstFolder,'skull'+'.des'), header=None, index=None,sep='\t')
+
+def SaveLabelInSeparateKeyFile(srcPath,dstPath,label):
+    allF=os.listdir(srcPath)
+    for f in allF:
+        k=ReadKeypoints(os.path.join(srcPath,f))
+        [resolution,header]=GetResolutionHeaderFromKeyFile(os.path.join(srcPath,f))
+        k1=FilterKeysByClass(k,label)
+        WriteKeyFile(os.path.join(dstPath,f),k1,header=header)
     
+def GenerateSkullSrippedImage(srcPath,maskPath,dstPath,nameRegex='^(\d+)'):
+    rName=re.compile(nameRegex)
+    allFilesSrc=os.listdir(srcPath)
+    allFilesMask=os.listdir(maskPath)
+    
+    for i in range(len(allFilesSrc)):
+           f=allFilesSrc[i]
+           
+           patientNumber=rName.findall(f)[0]
+           dP=os.path.join(dstPath,patientNumber+'.nii')
+           maskFileName=[x for x in allFilesMask if patientNumber in x ][0]
+           mP=os.path.join(maskPath,maskFileName)
+           iP=os.path.join(srcPath,f)
+           [arr,h]=ks.ReadImage(iP)
+           [mask,dump]=ks.ReadImage(mP)
+           mask=mask>0
+           arr2=arr*mask
+           ks.SaveImage(dP,arr2,h)
 def ReadDescriptors(srcPath):
     df=pandas.read_csv(srcPath,sep='\t',header=None)
     descriptors=df.to_numpy(dtype=np.int8)
@@ -142,64 +210,23 @@ def GetIndexFromMatchFile(filePath):
 
     return listIdx
         
-def  SelectKeyRotation(folderPath,rotation=True):
-    fp=str(Path(folderPath))
-    allF=os.listdir(fp)
-    
-    for f in allF:
-        if f[-3:]=='key':
-            p=os.path.join(fp,f)
-            [r,h]=GetResolutionHeaderFromKeyFile(p)
-            k=ReadKeypoints(p)
-            kNoRot=np.zeros(k.shape)
-            for i in range(kNoRot.shape[0]):
-                if k[i,16]==0 or k[i,16]==16:
-                    kNoRot[i,:]=k[i,:]
-            kNoRot=kNoRot[~np.all(kNoRot==0,axis=1)]
-            if rotation==False:
-                WriteKeyFile(p,kNoRot,h)
-            else:
-                kRot=SubstractKeyImages(k, kNoRot)
-                WriteKeyFile(p,kRot,h)
-
-def CreateCombinedMask(maskPaths,varPerMatches,dXYZ,resolutionTest,brainMask=True,maskToKeep=5):
-    #*****************MASKING
-    order=np.argsort(varPerMatches)
-    dXYZ=np.int32(dXYZ)
-    
-    firstMask=(brainMask==(kt.getNiiData(maskPaths[order[0]])>0))
-    marginXYZ=np.int32(2*np.amax(np.abs(dXYZ),axis=0))
-    shapeMask=np.array([resolutionTest[0]+2*marginXYZ[0],resolutionTest[1]+2*marginXYZ[1],resolutionTest[2]+2*marginXYZ[2]])
-    maskCombined=np.zeros(shapeMask)
-    tempMask=np.zeros(shapeMask)
-    t=GetSubCube(maskCombined,marginXYZ+dXYZ[order[0]],firstMask.shape)
-    t+=firstMask
-    
-    for i in range(1,maskToKeep):
-        tempMask=np.zeros(shapeMask)
-        t=GetSubCube(tempMask,marginXYZ+dXYZ[order[i]],firstMask.shape)
-        t+=(brainMask==(kt.getNiiData(maskPaths[order[i]])>0))
-        maskCombined=np.logical_and(maskCombined,tempMask)
-        
-    finalMask=GetSubCube(maskCombined,marginXYZ,firstMask.shape)
-    return finalMask
-
 def CompareKeyImages(k1,k2):
     s=0
     if k1.shape[0]>k2.shape[0]:
         for i in range(k2.shape[0]):
-            if np.sum(np.all(k1-k2[i,:]<1e-005,axis=1))==1:
+            if np.sum(np.all(k1[:,kIP.noFlag]-k2[i,kIP.noFlag]<1e-005,axis=1))==1:
                 s+=1
     else:
         for i in range(k1.shape[0]):
-            if np.sum(np.all(k2-k1[i,:]<1e-005,axis=1))==1:
+            if np.sum(np.all(k2[:,kIP.noFlag]-k1[i,kIP.noFlag]<1e-005,axis=1))==1:
                 s+=1
     return s     
+
 
 def SubstractKeyImages(positive,negative):
     rest=np.copy(positive)
     for i in range(rest.shape[0]):
-        if np.sum(np.all(negative-rest[i,:]<1e-005,axis=1))==1:
+        if np.sum(np.all(negative[:,kIP.noFlag]-rest[i,kIP.noFlag]<1e-005,axis=1))==1:
             rest[i,:]=0
     out=rest[~np.all(rest==0,axis=1)]
     return out
@@ -250,19 +277,7 @@ def CreateMaskKeyFiles(maskP,keyTestP,keyMaskP):
             mask=np.squeeze(img.get_fdata())>0
             brainK=FilterKeysWithMask(k,mask)
             WriteKeyFile(keyMaskFP,brainK,header=h)
-#            mat=ut.getKeypointFromOneFile(keyTestFP)
-#            fW = open(keyMaskFP,"w", newline="\n")
-#            fR = open(keyTestFP,"r")
-#            for i in range(6):
-#                fW.write(fR.readline())
-#            
 
-#            for i in range(mat.shape[0]):
-#                if arr[tuple(np.int32(mat[i,kIP.XYZ]))]==True:
-#                    fW.write(fR.readline())
-#    
-#    fW.close()
-#    fR.close()
 
 def GetSubCube(array,lowBound,shapeSubCube):
     """
@@ -274,7 +289,29 @@ def GetSubCube(array,lowBound,shapeSubCube):
     return a[lb[0]:lb[0]+hb[0],
              lb[1]:lb[1]+hb[1],
              lb[2]:lb[2]+hb[2]]
-
+def houghTransformGaussian(matchedXYZDifference,sigma=3):
+    """
+    hough transform using using gaussian filter instead of bins to detect most probable translation
+     *** INPUT ***
+    matchedXYZDifference: shape(i,j)
+       i:number of match
+       j: X Y Z
+    sigma: parameter of the gaussian filter
+     *** OUTPUT ***
+    probMap: probability map indexed by translation XYZ
+    probableDXYZ: most probable translation
+    """
+    dXYZ=matchedXYZDifference
+    maxDiff=np.amax(np.abs(dXYZ)).astype(int)
+    s=2*maxDiff+1
+    probMap=np.zeros((s,s,s),dtype=np.float64)
+    for j in range(np.shape(dXYZ)[0]):
+            xyz= tuple((np.floor(dXYZ[j,:])+maxDiff).astype(int))
+            probMap[xyz]=probMap[xyz]+1
+    probMap=gaussian_filter(probMap,sigma)
+    probableDXYZ=np.unravel_index(np.argmax(probMap),probMap.shape)-maxDiff
+    
+    return [probMap, probableDXYZ]
 
 def GenerateMask(listMatches,keyTrainingData,keyTest,resolutionTest,kIP,maskPaths,allKeyMaskPaths,patientName):
     varPerMatches=np.zeros(len(listMatches))
@@ -288,7 +325,7 @@ def GenerateMask(listMatches,keyTrainingData,keyTest,resolutionTest,kIP,maskPath
         trainingXYZ=keyTrainingDatum[np.int32(matches[:,1]),kIP.XYZ]
         matchedXYZDifference=testXYZ-trainingXYZ      
         varPerMatches[i]=np.var(matchedXYZDifference[:,0])+np.var(matchedXYZDifference[:,1])+np.var(matchedXYZDifference[:,2]) #TO IMPROVE
-        [unused,dXYZ[i,:]]=kt.houghTransformGaussian(matchedXYZDifference)
+        [unused,dXYZ[i,:]]=houghTransformGaussian(matchedXYZDifference)
     
     
     brainMask=CreateCombinedMask(maskPaths,varPerMatches,dXYZ,resolutionTest)
@@ -304,24 +341,11 @@ def GetProbabilityKeyFromPMap(pMap,keys):
         pK[i,:]=pMap[int(keys[i,0]),int(keys[i,1]),int(keys[i,2]),:]
     return pK
 
-def ClassifyByRatio(probabilityKey,desiredRatio=0.95):
-    d=1
-    f=1
-    pK=probabilityKey
-    while d>0.1:
-        mask=f*pK[:,0]>pK[:,1]
-        nB=np.sum(mask)
-        nS=np.sum(~mask)
-        r=nB/(nB+nS)
-        d=desiredRatio-r
-        f=f*(1+d)
-    indexBrain=f*pK[:,0]>pK[:,1]
-    return indexBrain
         
-def GenerateTrainingDatabase(srcKeyPath,destPath,maskPath,numberDetectionRegex='OAS._([0-9]{4})_',maskFileType='hdr' ,considerScale=False):
+def GenerateTrainingDatabase(srcKeyPath,dstPath,maskPath,numberDetectionRegex='OAS._([0-9]{4})_',maskFileType='hdr' ,considerScale=False):
     rPatientNumber=re.compile(numberDetectionRegex)
     srcKeyPath=str(Path(srcKeyPath))
-    destPath=str(Path(destPath))
+    dstPath=str(Path(dstPath))
     maskPath=str(Path(maskPath))
     
     allF=os.listdir(srcKeyPath)
@@ -329,13 +353,13 @@ def GenerateTrainingDatabase(srcKeyPath,destPath,maskPath,numberDetectionRegex='
     
     for i in range(len(allF)):
         f=allF[i]
-        print(f)
         patientNumber=rPatientNumber.findall(f)[0]
         path=(os.path.join(srcKeyPath,f))
         k=ReadKeypoints(path)
         [r,h]=GetResolutionHeaderFromKeyFile(path)
         maskName=[x for x in allMask if (patientNumber in x and maskFileType in x)][0]
-        mask=kt.getNiiData(os.path.join(maskPath,maskName))>0
+        [mask,header]=ReadImage(os.path.join(maskPath,maskName))
+        mask=mask>0
         if considerScale==False:
             kBrain=FilterKeysWithMask(k,mask)
             kSkull=FilterKeysWithMask(k,~mask)
@@ -346,35 +370,8 @@ def GenerateTrainingDatabase(srcKeyPath,destPath,maskPath,numberDetectionRegex='
         kSkull[:,kIP.flag]=np.int32(kSkull[:,kIP.flag])&~(1<<0)
         allKey=np.append(kBrain,kSkull,axis=0)
         WriteKeyFile(os.path.join(dstPath,patientNumber+'.key'),allKey,header=h)
-        print(f)
+        print(os.path.join(dstPath,patientNumber+'.key'))
         
-
-def UnitTestGenerateTrainingDatabase(databasePath,srcKeyPath):
-    srcKeyPath=str(Path(srcKeyPath))
-    databasePath=str(Path(databasePath))
-    brainPath=os.path.join(databasePath,'brainKey')
-    skullPath=os.path.join(databasePath,'skullKey')
-    allBrain=os.listdir(brainPath)
-    allKey=os.listdir(srcKeyPath)
-    for i in range(len(allBrain)):
-        f=allBrain[i]
-        name=f[:-4]
-        keyFile=[x for x in allKey if name in x][0]
-        k=ReadKeypoints(os.path.join(srcKeyPath,keyFile))
-        kBrain=ReadKeypoints(os.path.join(brainPath,f))
-        kSkull=ReadKeypoints(os.path.join(skullPath,f))
-        
-        combinedKey=np.concatenate((kBrain,kSkull),axis=0)
-        s=CompareKeyImages(k,combinedKey)
-        if s!=combinedKey.shape[0] or s!=k.shape[0]:
-            print('combined: ',combinedKey.shape[0])
-            print('original: ',k.shape[0])
-            print('number equal: ',s)
-            m1=SubstractKeyImages(combinedKey,k)
-            m2=SubstractKeyImages(k,combinedKey)
-            print(m1)
-            print(m2)
-            print('failed')
 
 def GenerateFilePaths(trainingSetPath):
     trainingSetPath=str(Path(trainingSetPath))
@@ -387,36 +384,7 @@ def GenerateFilePaths(trainingSetPath):
         skullFilePaths[i]=os.path.join(trainingSetPath,'skullKey',skullFilePaths[i])
     return [brainFilePaths,skullFilePaths]
 
-def RemoveTestPatientFromFilePaths(listTestNumber,brainFilePaths,skullFilePaths):
-    for testNumber in listTestNumber:
-        brainFilePaths=[x for x in brainFilePaths if testNumber not in os.path.basename(x)]
-        skullFilePaths=[x for x in skullFilePaths if testNumber not in os.path.basename(x)]
-    return [brainFilePaths, skullFilePaths]
 
-def CombineAllKey(brainFilePaths,skullFilePaths):
-    listBrainKeys=[]
-    listSkullKeys=[]
-    nbKey=0
-    for i in range(len(brainFilePaths)):
-        k1=ReadKeypoints(brainFilePaths[i])
-        listBrainKeys.append(k1)
-        k2=ReadKeypoints(skullFilePaths[i])
-        listSkullKeys.append(k2)
-        nbKey+=k1.shape[0]+k2.shape[0]
-        print('reading training file:',i)
-        
-    allTrainingKey=np.zeros((nbKey,83))
-    indexCounter=0
-    for i in range(len(listBrainKeys)):
-        keyBrain=listBrainKeys[i]
-        keySkull=listSkullKeys[i]
-        allTrainingKey[indexCounter:indexCounter+keyBrain.shape[0],:-1]=np.concatenate((keyBrain,np.ones((keyBrain.shape[0],1))),axis=1)
-        allTrainingKey[indexCounter:indexCounter+keyBrain.shape[0],-1]=i
-        indexCounter+=keyBrain.shape[0]
-        allTrainingKey[indexCounter:indexCounter+keySkull.shape[0],:-1]=np.concatenate((keySkull,np.zeros((keySkull.shape[0],1))),axis=1)
-        allTrainingKey[indexCounter:indexCounter+keySkull.shape[0],-1]=i
-        indexCounter+=keySkull.shape[0]
-    return allTrainingKey
 
 def GenerateNormalizedProbabilityMap(pK,keyTest,brainShape):
     #to do, consider cases with smaller blank window around the brain
@@ -424,18 +392,14 @@ def GenerateNormalizedProbabilityMap(pK,keyTest,brainShape):
     for i in range(keyTest.shape[0]):
         scale=keyTest[i,kIP.scale]
         s=int(scale)
-        size=int(int(scale)*2+1)
-        mid=int((size+1)/2)
+        size=int(s*2+1)
+        mid=s+1
         probabilityPoint=np.zeros((size,size,size,2))
         probabilityPoint[mid,mid,mid,:]=pK[i,:]
         probabilityPoint[:,:,:,0]=gaussian_filter(probabilityPoint[:,:,:,0],sigma=scale)
         probabilityPoint[:,:,:,1]=gaussian_filter(probabilityPoint[:,:,:,1],sigma=scale)       
         XYZ=np.int64(np.asarray(keyTest[i,kIP.XYZ]))
         pMap[XYZ[0]-s:XYZ[0]+s+1,XYZ[1]-s:XYZ[1]+s+1,XYZ[2]-s:XYZ[2]+s+1,:]+=probabilityPoint
-        
-#        maximum
-#        viewpMap=pMap[XYZ[0]-s:XYZ[0]+s+1,XYZ[1]-s:XYZ[1]+s+1,XYZ[2]-s:XYZ[2]+s+1,:]
-#        pMap[XYZ[0]-s:XYZ[0]+s+1,XYZ[1]-s:XYZ[1]+s+1,XYZ[2]-s:XYZ[2]+s+1,:]=np.maximum(probabilityPoint,viewpMap)
     return pMap
 
 def GenerateSearchTree(brainDescriptor,skullDescriptor):
@@ -444,58 +408,8 @@ def GenerateSearchTree(brainDescriptor,skullDescriptor):
     paramsB = flannB.build_index(brainDescriptor, algorithm="kdtree",trees=8);
     paramsS=flannS.build_index(skullDescriptor, algorithm="kdtree",trees=8);
     return [[flannB,flannS],[paramsB,paramsS]]
-    
-def _SkullStripTest(testKey,listFlann,listParam,nbTrainingImages,brainShape,normalizeProbabilitySpatially=False,patientRepertory=None,keyTrueBrain=None,patientName=None,doRandomTest=False):
-    flannB=listFlann[0]
-    flannS=listFlann[1]
-    paramsB=listParam[0]
-    paramsS=listParam[1]
-    pK=np.zeros((testKey.shape[0],2))
 
-    for i in range(testKey.shape[0]):
-        resultB, distB = flannB.nn_index(testKey[i,kIP.descriptor],nbTrainingImages, checks=paramsB["checks"])
-        distAB=np.squeeze(np.asarray(distB))
-        
-        resultS, distS = flannS.nn_index(testKey[i,kIP.descriptor],nbTrainingImages, checks=paramsS["checks"])
-        distAS=np.squeeze(np.asarray(distS))
-        var=np.sqrt(np.minimum(distAB[0],distAS[0]))+1
-        pK[i,0]=np.sum(np.exp(-distAB/(2*np.power(var,2))))
-        pK[i,1]=np.sum(np.exp(-distAS/(2*np.power(var,2))))
-#    pK=pK/testKey.shape[0]
-        
-    if normalizeProbabilitySpatially==True and doRandomTest==False:
-        #prevent outliers from warping results too much
-#        for j in range(pK.shape[1]):
-#            avg=np.mean(pK[:,j])
-#            var=np.var(pK[:,j])
-#            pK[:,j]=np.clip(pK[:,j],avg-2*var,avg+2*var)
-            
-        pMap=GenerateNormalizedProbabilityMap(pK,testKey,brainShape)
-        pK=GetProbabilityKeyFromPMap(pMap,testKey)
-        
-        mask=pMap[:,:,:,0]>pMap[:,:,:,1]
-        
-        keyBrain=FilterKeysWithMask(testKey,mask)
-        keySkull=FilterKeysWithMask(testKey,~mask)
-        
-    elif doRandomTest==False:
-           indexBrain=pK[:,0]>pK[:,1]
-           keyBrain=testKey[indexBrain]
-           keySkull=testKey[~indexBrain]
-    else:
-        r=np.random.rand((pK.shape[0]))
-        indexBrain=(r<=0.90)
-        keyBrain=testKey[indexBrain]
-        keySkull=testKey[~indexBrain]
-
-    if patientRepertory!=None:
-        patientObject=Patient(testKey,keyTrueBrain,keyBrain=keyBrain,keySkull=keySkull)
-        patientRepertory.AddPatient(patientName,patientObject)
-        print(patientName)
-        patientObject.PrintStats()
-    return [keyBrain,keySkull]
-
-def _SkullStrip(testKey,listFlann,listParam,nbTrainingImages,brainShape,normalizeProbabilitySpatially=False,):
+def _SkullStrip(testKey,listFlann,listParam,nbTrainingImages,brainShape,normalize='gaussian'):
     flannB=listFlann[0]
     flannS=listFlann[1]
     paramsB=listParam[0]
@@ -513,9 +427,8 @@ def _SkullStrip(testKey,listFlann,listParam,nbTrainingImages,brainShape,normaliz
         var=np.sqrt(np.minimum(distAB[0],distAS[0]))+1
         pK[i,0]=np.sum(np.exp(-distAB/(2*np.power(var,2))))
         pK[i,1]=np.sum(np.exp(-distAS/(2*np.power(var,2))))
-#    pK=pK/testKey.shape[0]
-        
-    if normalizeProbabilitySpatially==True:          
+
+    if normalize=='gaussian':          
         pMap=GenerateNormalizedProbabilityMap(pK,testKey,brainShape)
         pK=GetProbabilityKeyFromPMap(pMap,testKey)
         
@@ -523,7 +436,10 @@ def _SkullStrip(testKey,listFlann,listParam,nbTrainingImages,brainShape,normaliz
         
         keyBrain=FilterKeysWithMask(testKey,mask)
         keySkull=FilterKeysWithMask(testKey,~mask)
-        
+    elif normalize=='directionalS':
+        [keyBrain,keySkull]=_NormalizeDirectionalySum(pK,testKey)
+    elif normalize=='directionnalX':
+        [keyBrain,keySkull]=_NormalizeDirectionalyX(pK,testKey)
     else:
            indexBrain=pK[:,0]>pK[:,1]
            keyBrain=testKey[indexBrain]
@@ -531,13 +447,115 @@ def _SkullStrip(testKey,listFlann,listParam,nbTrainingImages,brainShape,normaliz
 
     return [keyBrain,keySkull]
 
-def SkullStrip(originalKeysPath,dstPath,brainTrainingSetPath=r'S:\skullStripData\trainingSet\brain.des',skullTrainingSetPath=r"S:\skullStripData\trainingSet\skull.des",printNonBrain=False,numberOfTrainingImages=None):
+def _NormalizeDirectionalySum(pK,testKey):
+    #using direction
+    flannPosition=FLANN()
+    paramsPosition=flannPosition.build_index(testKey[:,kIP.XYZ], algorithm="kdtree",trees=8)
+    newPK=np.zeros(pK.shape)
+    for i in range(testKey.shape[0]):
+        #find nNN closest neighbours
+        nNN=10
+        result, dist=flannPosition.nn_index(testKey[i,kIP.XYZ],nNN,checks=paramsPosition["checks"])
+
+        idxKeep=dist>0.1 # should be zero, its to avoid float point errors
+        dist=np.transpose(dist[idxKeep])
+        pos=testKey[result[idxKeep],kIP.XYZ]
+        translation=pos-testKey[i,kIP.XYZ]
+        denom=np.transpose([np.sqrt(dist)])
+        translationNormalized=translation/denom
+        for j in range(pK.shape[1]):
+            
+            pKused=pK[result[idxKeep],j]
+            denom=2*testKey[result[idxKeep],kIP.scale]**2
+            gaussian=1/(kIP.scale*np.sqrt(2*3.1416))*np.exp(-dist/denom)*[pKused]
+            gaussianXtrans=np.transpose(gaussian)*translationNormalized
+            s=np.sum(gaussianXtrans,axis=0)
+            norm=np.sqrt(np.sum(s**2))
+            p=np.exp(-norm)
+            # p=1/norm
+            newPK[i,j]=pK[i,j]*p
+        
+    #propagate values to keypoint with different rotation
+    tempP=np.zeros((1,2))
+    startIndex=0
+    previousXYZ=testKey[0,kIP.XYZ]
+    for i in range(pK.shape[0]+1):
+        if i==newPK.shape[0] or np.all(previousXYZ!=testKey[i,kIP.XYZ]):
+            maxIdx=np.argmax(newPK[startIndex:i,:],axis=0)
+            maxIdx=maxIdx+startIndex
+            tempP=np.array([newPK[maxIdx[0],0],newPK[maxIdx[1],1]])
+            newPK[startIndex:i,:]=tempP
+            startIndex=i
+        if i!=pK.shape[0]:
+           previousXYZ=testKey[i,kIP.XYZ]  
+    indexBrain=pK[:,0]>pK[:,1]
+    keyBrain=testKey[indexBrain]
+    keySkull=testKey[~indexBrain]     
+            
+    return [keyBrain,keySkull]
+
+def _NormalizeDirectionalyX(pK,testKey):
+    #using direction
+    flannPosition=FLANN()
+    paramsPosition=flannPosition.build_index(testKey[:,kIP.XYZ], algorithm="kdtree",trees=8)
+    newPK=np.zeros(pK.shape)
+    for i in range(testKey.shape[0]):
+        #find nNN closest neighbours
+        nNN=40
+        idxKey, dist=flannPosition.nn_index(testKey[i,kIP.XYZ],nNN,checks=paramsPosition["checks"])
+        projections=np.array([[1,0,0,],[0,1,0],[0,0,1],[-1,0,0],[0,-1,0],[0,0,-1]])
+
+        idxZ=dist==0
+        idxNZ=dist>0.1 # should be zero, its to avoid float point errors
+        dist=np.transpose(dist)
+        pos=testKey[idxKey,kIP.XYZ]
+        translation=pos-testKey[i,kIP.XYZ]
+        denom=np.transpose([np.sqrt(dist)])
+        translationNormalized=translation/denom
+        for j in range(pK.shape[1]):
+            projAccum=np.zeros(6)
+            #0 dist
+            pZ=pK[idxKey[idxZ],j]
+            denom=2*testKey[idxKey[idxZ],kIP.scale]**2
+            gaussian=1/(kIP.scale*np.sqrt(2*np.pi))*np.exp(-dist[idxZ]/denom)*[pZ]
+            projAccum+=np.sum(np.power(gaussian,1/6))
+            
+            pKused=pK[idxKey,j]
+            denom=2*testKey[idxKey[idxKeep],kIP.scale]**2
+            gaussian=1/(kIP.scale*np.sqrt(2*np.pi))*np.exp(-dist/denom)*[pKused]
+            gaussianXtrans=np.transpose(gaussian)*translationNormalized
+            s=np.sum(gaussianXtrans,axis=0)
+            norm=np.sqrt(np.sum(s**2))
+            p=np.exp(-norm)
+            # p=1/norm
+            newPK[i,j]=pK[i,j]*p
+        
+    #propagate values to keypoint with different rotation
+    tempP=np.zeros((1,2))
+    startIndex=0
+    previousXYZ=testKey[0,kIP.XYZ]
+    for i in range(pK.shape[0]+1):
+        if i==newPK.shape[0] or np.all(previousXYZ!=testKey[i,kIP.XYZ]):
+            maxIdx=np.argmax(newPK[startIndex:i,:],axis=0)
+            maxIdx=maxIdx+startIndex
+            tempP=np.array([newPK[maxIdx[0],0],newPK[maxIdx[1],1]])
+            newPK[startIndex:i,:]=tempP
+            startIndex=i
+        if i!=pK.shape[0]:
+           previousXYZ=testKey[i,kIP.XYZ]  
+    indexBrain=pK[:,0]>pK[:,1]
+    keyBrain=testKey[indexBrain]
+    keySkull=testKey[~indexBrain]     
+            
+    return [keyBrain,keySkull]
+       
+def SkullStrip(originalKeysPath,dstPath,brainTrainingSetPath=r'S:\skullStripData\trainingSet\brain.des',skullTrainingSetPath=r"S:\skullStripData\trainingSet\skull.des",printNonBrain=True,numberOfTrainingImages=None,normalize='gaussian'):
     allTestName=os.listdir(originalKeysPath)
     brainDescriptor=np.int32(ReadDescriptors(brainTrainingSetPath))
     skullDescriptor=np.int32(ReadDescriptors(skullTrainingSetPath))
     
     if numberOfTrainingImages==None:
-        numberOfTrainingImages=brainDescriptor.shape[0]/1000
+        numberOfTrainingImages=brainDescriptor.shape[0]/4000
     [listFlann,listParam]=GenerateSearchTree(brainDescriptor,skullDescriptor)
     
     for i in range(len(allTestName)):
@@ -546,23 +564,30 @@ def SkullStrip(originalKeysPath,dstPath,brainTrainingSetPath=r'S:\skullStripData
             testPath=os.path.join(originalKeysPath,testName)        
             testKey=ReadKeypoints(testPath)
             [resolution,header]=GetResolutionHeaderFromKeyFile(testPath)    
-            [keyBrain,keySkull]=_SkullStrip(testKey,listFlann,listParam,numberOfTrainingImages,resolution,normalizeProbabilitySpatially=True)
+            [keyBrain,keySkull]=_SkullStrip(testKey,listFlann,listParam,numberOfTrainingImages,resolution,normalize)
             keyBrain[:,kIP.flag]=np.int32(keyBrain[:,kIP.flag])|(1<<0)
             keySkull[:,kIP.flag]=np.int32(keySkull[:,kIP.flag])&~(1<<0)
             if printNonBrain==True:
                 keyBrain=np.append(keyBrain,keySkull,axis=0)
-            else:
-                WriteKeyFile(os.path.join(dstPath,testName),keyBrain,header=header)
+            WriteKeyFile(os.path.join(dstPath,testName),keyBrain,header=header)
+            print(os.path.join(dstPath,testName))
 
-def EvaluateSkullStrip(resultPath,groundTruthPath):
-    allFiles=os.listdir(resultPath)
-    
+def EvaluateSkullStrip(resultPath,groundTruthPath,nameRegex='^(\d+)'):
+    allFilesResult=os.listdir(resultPath)
+    allFilesTruth=os.listdir(groundTruthPath)
     patientRepertory=PatientRepertory()
-    
-    for i in range(len(allFiles)):
-        f=allFiles[i]
+    if nameRegex!=None:
+        rName=re.compile(nameRegex)
+        
+    for i in range(len(allFilesResult)):
+        f=allFilesResult[i]
         rF=os.path.join(resultPath,f)
-        gF=os.path.join(groundTruthPath,f)
+        if nameRegex!=None:
+            patientNumber=rName.findall(f)[0]
+            truthFileName=[x for x in allFilesTruth if patientNumber in x ][0]
+            gF=os.path.join(groundTruthPath,truthFileName)
+        else:
+            gF=os.path.join(groundTruthPath,f)
         
         keyR=ReadKeypoints(rF)
         keyG=ReadKeypoints(gF)
@@ -571,9 +596,10 @@ def EvaluateSkullStrip(resultPath,groundTruthPath):
         patientRepertory.AddPatient(f,patientObject)
         print(f)
         patientObject.PrintStats()
+    print(patientRepertory.GetAvgKeyBrainDC())
+    print(patientRepertory.GetAvgKeySkullDC())
 
-def FilterKeysByClass(keys,classValue):
-    return keys[np.int32(keys[:,kIP.flag])&classValue==classValue,:]
+
         
 def GenerateCommandFileToGenerateKeyFiles(folderPath,modifiers='-i '):
     folderPath=str(Path(folderPath))
@@ -589,50 +615,6 @@ def GenerateCommandFileToGenerateKeyFiles(folderPath,modifiers='-i '):
             string='./featextract.ubu '+modifiers+'./'+f+' ./key/'+f[:-4]+'.key\n'
             fW.write(string)
     fW.close()
-    
-
-
-
-def BrainExtractionOnFolder(inputFolderPath,trainingSetPath,resultPath,ignoreSameNameInTraining=False):
-    inputFolderPath=str(Path(inputFolderPath))
-    trainingSetPath=str(Path(trainingSetPath))
-    resultPath=str(Path(resultPath))
-    
-    numberDetectionRegex='OAS._([0-9]{4})_'  #detect the number in path following this format:
-#S:\skullStripData\keyMaskMany\OAS1_0002_MR1_mpr_nn_anon_111_t88_masked_gfc_reg.key
-#use of regex will return '0002' on that path
-    allKeyTestPaths=ut.listdir_fullpath(inputFolderPath)
-    rPatientNumber=re.compile(numberDetectionRegex)
-    listTestNumber=[]
-    allTestPath=allKeyTestPaths
-    for testPath in allTestPath:
-        
-        listTestNumber.append(os.path.basename(testPath)[:-4])
-    
-    [brainFilePaths, skullFilePaths]=GenerateFilePaths(trainingSetPath)
-    
-    if ignoreSameNameInTraining==True:
-        [brainFilePaths, skullFilePaths]=RemoveTestPatientFromFilePaths(listTestNumber,brainFilePaths,skullFilePaths)
-    
-    allKey=CombineAllKey(brainFilePaths,skullFilePaths)
-    [listFlann,listParam]=GenerateSearchTree(allKey)
-    
-    for i in range(len(allTestPath)):
-        testPath=allTestPath[i]
-        testNumber=listTestNumber[i]
-        testKey=ReadKeypoints(testPath)
-        [resolution,header]=GetResolutionHeaderFromKeyFile(testPath)
-        resolution=np.asarray(resolution)
-        mXYZ=np.mean(testKey[:,kIP.XYZ],axis=0)
-        tXYZ=resolution
-        dXYZ=tXYZ-mXYZ
-        testKey[:,kIP.XYZ]=dXYZ+testKey[:,kIP.XYZ]
-        [keyBrain,keySkull]=SkullStrip(testKey,listFlann,listParam,len(brainFilePaths),resolution*2,normalizeProbabilitySpatially=True)
-        keyBrain[:,kIP.XYZ]-=dXYZ
-        keySkull[:,kIP.XYZ]-=dXYZ
-        writePath=os.path.join(resultPath,testNumber+'.key')
-        WriteKeyFile(writePath,keyBrain,header=header)
-        print(testNumber)
 
 def ExactNN(v,matrix):
      matrix=matrix-v
@@ -705,7 +687,7 @@ class Patient:
             self.fn=CompareKeyImages(self.kSkull,self.ktBrain)
             self.marginBrain=CompareKeyImages(self.kMargin,self.ktBrain)
             self.marginSkull=CompareKeyImages(self.kMargin,self.ktSkull)
-            self.mDC=ut.getDC(self.mBrain,self.mtBrain,1)
+            self.mDC=getDC(self.mBrain,self.mtBrain,1)
             self.kBrainDC=2*self.tp/(self.kBrain.shape[0]+self.ktBrain.shape[0])
             self.kSkullDC=2*self.tn/(self.kSkull.shape[0]+self.ktSkull.shape[0])
         elif np.any(keyBrain) and np.any(keySkull):
@@ -720,9 +702,13 @@ class Patient:
             self.tn=CompareKeyImages(self.kSkull,self.ktSkull)
             self.fn=CompareKeyImages(self.kSkull,self.ktBrain)
             self.brainAccuracy=self.tp/(self.tp+self.fp)
-            self.notBrainAccuracy=self.tn/(self.tn+self.fn)
             self.kBrainDC=2*self.tp/(self.kBrain.shape[0]+self.ktBrain.shape[0])
-            self.kSkullDC=2*self.tn/(self.kSkull.shape[0]+self.ktSkull.shape[0])
+            if self.tn!=0 and self.fn!=0:
+                self.notBrainAccuracy=self.tn/(self.tn+self.fn)
+                self.kSkullDC=2*self.tn/(self.kSkull.shape[0]+self.ktSkull.shape[0])
+            else:
+                self.notBrainAccuracy=0
+                self.kSkullDC=0
         
         
     def PrintStats(self):
@@ -778,3 +764,4 @@ class PatientRepertory:
     
     def ListPatient(self):
                 return self.__patientDict.keys()
+        
