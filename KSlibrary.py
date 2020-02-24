@@ -92,10 +92,13 @@ def ReadKeypoints(filePath):
     
 def RemoveDescriptorsFromFile(filePath,startIndex,endIndex,percentageIndex=True):
     df=pandas.read_csv(filePath,sep='\t',header=None)
+    p,ext=os.path.splitext(filePath)
+    filePath=p+'_'+str(startIndex)+'_'+str(endIndex)+ext
     if percentageIndex==True:
         n=df.shape[0]
         startIndex=int(n*startIndex/100)
         endIndex=int(n*endIndex/100)
+
     d=df[startIndex:endIndex]
     d.to_csv(filePath, header=None, index=None,sep='\t')
     
@@ -438,7 +441,7 @@ def _SkullStrip(testKey,listFlann,listParam,nbTrainingImages,brainShape,normaliz
         keySkull=FilterKeysWithMask(testKey,~mask)
     elif normalize=='directionalS':
         [keyBrain,keySkull]=_NormalizeDirectionalySum(pK,testKey)
-    elif normalize=='directionnalX':
+    elif normalize=='directionalX':
         [keyBrain,keySkull]=_NormalizeDirectionalyX(pK,testKey)
     else:
            indexBrain=pK[:,0]>pK[:,1]
@@ -499,35 +502,42 @@ def _NormalizeDirectionalyX(pK,testKey):
     flannPosition=FLANN()
     paramsPosition=flannPosition.build_index(testKey[:,kIP.XYZ], algorithm="kdtree",trees=8)
     newPK=np.zeros(pK.shape)
+    projections=np.array([[1,0,0,],[0,1,0],[0,0,1],[-1,0,0],[0,-1,0],[0,0,-1]])
     for i in range(testKey.shape[0]):
         #find nNN closest neighbours
         nNN=40
         idxKey, dist=flannPosition.nn_index(testKey[i,kIP.XYZ],nNN,checks=paramsPosition["checks"])
-        projections=np.array([[1,0,0,],[0,1,0],[0,0,1],[-1,0,0],[0,-1,0],[0,0,-1]])
+        idxKey=np.squeeze(idxKey)
+        dist=np.squeeze(dist)
 
         idxZ=dist==0
         idxNZ=dist>0.1 # should be zero, its to avoid float point errors
         dist=np.transpose(dist)
         pos=testKey[idxKey,kIP.XYZ]
         translation=pos-testKey[i,kIP.XYZ]
-        denom=np.transpose([np.sqrt(dist)])
-        translationNormalized=translation/denom
+        denom=np.transpose([np.sqrt(dist[idxNZ])])
+        translationNormalized=translation[idxNZ]/denom
         for j in range(pK.shape[1]):
             projAccum=np.zeros(6)
             #0 dist
             pZ=pK[idxKey[idxZ],j]
             denom=2*testKey[idxKey[idxZ],kIP.scale]**2
-            gaussian=1/(kIP.scale*np.sqrt(2*np.pi))*np.exp(-dist[idxZ]/denom)*[pZ]
+            t1=(testKey[idxKey[idxZ],kIP.scale]*np.sqrt(2*np.pi))
+            t2=np.exp(-dist[idxZ]/denom)*[pZ]
+            gaussian=1/t1*t2
             projAccum+=np.sum(np.power(gaussian,1/6))
+            # projAccum+=np.exp(np.sum(np.power(gaussian,1/6)))
             
-            pKused=pK[idxKey,j]
-            denom=2*testKey[idxKey[idxKeep],kIP.scale]**2
-            gaussian=1/(kIP.scale*np.sqrt(2*np.pi))*np.exp(-dist/denom)*[pKused]
-            gaussianXtrans=np.transpose(gaussian)*translationNormalized
-            s=np.sum(gaussianXtrans,axis=0)
-            norm=np.sqrt(np.sum(s**2))
-            p=np.exp(-norm)
-            # p=1/norm
+            #non-zero dist
+            for n in range(projections.shape[0]):
+                pNZ=pK[idxKey[idxNZ],j]
+                denom=2*testKey[idxKey[idxNZ],kIP.scale]**2
+                gaussian=1/(kIP.scale*np.sqrt(2*np.pi))*np.exp(-dist[idxNZ]/denom)*[pNZ]
+                gaussianXtrans=np.transpose(gaussian)*translationNormalized
+                gaussianProjections=(gaussianXtrans*projections[n,:]).clip(min=0)
+                projAccum+=np.sum(gaussianProjections)
+            
+            p=np.exp(np.sum(np.log(projAccum)))
             newPK[i,j]=pK[i,j]*p
         
     #propagate values to keypoint with different rotation
@@ -548,7 +558,8 @@ def _NormalizeDirectionalyX(pK,testKey):
     keySkull=testKey[~indexBrain]     
             
     return [keyBrain,keySkull]
-       
+
+
 def SkullStrip(originalKeysPath,dstPath,brainTrainingSetPath=r'S:\skullStripData\trainingSet\brain.des',skullTrainingSetPath=r"S:\skullStripData\trainingSet\skull.des",printNonBrain=True,numberOfTrainingImages=None,normalize='gaussian'):
     allTestName=os.listdir(originalKeysPath)
     brainDescriptor=np.int32(ReadDescriptors(brainTrainingSetPath))
