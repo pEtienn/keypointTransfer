@@ -2,8 +2,8 @@
 """
 Created on Tue Oct 22 16:16:02 2019
 import sys
-sys.argv=['',r'S:\testMatch\OAS1_0001_MR1_mpr_n4_anon_111_t88_gfc\orginalNotMatchedWithSS.key']
-dir
+sys.argv=['',r"S:\HCP_NoSkullStrip_T1w\Keypoints_VoxelCoordinates\100307_T1w_NoSkullStrip.key"]
+execfile(r'S:\keySkullStripping\Python\visualizeFeatures.py')
 @author: Etenne Pepyn
 """
 import os
@@ -15,6 +15,8 @@ from scipy.ndimage import gaussian_filter
 from pyflann import *
 import pandas
 from numba import guvectorize,float64,int64
+import sys
+import subprocess
 
 class keyInformationPosition():
     """
@@ -30,6 +32,12 @@ class keyInformationPosition():
     
 kIP=keyInformationPosition()
 
+def ApplyFuncToKey(path,fct,args):
+    k=ReadKeypoints(path)
+    r,h=GetResolutionHeaderFromKeyFile(path)
+    k1=fct(k,*args)
+    WriteKeyFile(path,k1,h)
+    
 def getDC(computed,truth,value):
     mapC=computed==value
     mapT=truth==value
@@ -57,6 +65,16 @@ def CreateExtractAllKeyFile(srcPath,nameRegex='^(\d+)'):
             s='./featExtract.ubu ./'+f+' ./key/'+patientNumber+'.key\n'
             fW.write(s)
     fW.close()
+    
+def ExtractAllKeys(volume,dstPath,volumeID='(\d{6})[_.]'):
+    rVolumeID=re.compile(volumeID)
+    allF=os.listdir(volume)
+    print('extracting keypoints')
+    for f in allF:
+        num=rVolumeID.findall(f)[0]
+        print(num)
+        list_files = subprocess.run([r"S:\75mmHCP\featExtract.exe",os.path.join(volume,f),os.path.join(dstPath,num+'.key')])
+        print("The exit code was: %d" % list_files.returncode)
     
 def ReadImage(filePath):
     filePath=str(Path(filePath))
@@ -129,20 +147,23 @@ def GenerateSkullSrippedImage(srcPath,maskPath,dstPath,nameRegex='^(\d+)'):
     rName=re.compile(nameRegex)
     allFilesSrc=os.listdir(srcPath)
     allFilesMask=os.listdir(maskPath)
-    
+    print('generating skull stripped images')
     for i in range(len(allFilesSrc)):
            f=allFilesSrc[i]
            
            patientNumber=rName.findall(f)[0]
-           dP=os.path.join(dstPath,patientNumber+'.nii')
-           maskFileName=[x for x in allFilesMask if patientNumber in x ][0]
-           mP=os.path.join(maskPath,maskFileName)
-           iP=os.path.join(srcPath,f)
-           [arr,h]=ks.ReadImage(iP)
-           [mask,dump]=ks.ReadImage(mP)
-           mask=mask>0
-           arr2=arr*mask
-           ks.SaveImage(dP,arr2,h)
+           print(patientNumber)
+           dP=os.path.join(dstPath,patientNumber+'.nii.gz')
+           if not(os.path.isfile(dP)):
+               maskFileName=[x for x in allFilesMask if patientNumber in x ][0]
+               mP=os.path.join(maskPath,maskFileName)
+               iP=os.path.join(srcPath,f)
+               [arr,h]=ReadImage(iP)
+               [mask,dump]=ReadImage(mP)
+               mask=mask>0
+               arr2=arr*mask
+               SaveImage(dP,arr2,h)
+           
 def ReadDescriptors(srcPath):
     df=pandas.read_csv(srcPath,sep='\t',header=None)
     descriptors=df.to_numpy(dtype=np.int8)
@@ -213,6 +234,46 @@ def GetIndexFromMatchFile(filePath):
 
     return listIdx
         
+def FilterKeyUsingIndexFile(pKey1,pKey2,pIdxImg1,pIdxImg2,keyUnmatched=True):
+    #pKeyMatched must contain the string 'Match'
+    pKeyMatch=os.path.join(os.path.dirname(pKey1),os.path.basename(pKey1)[:-4]+'_MatchTo_'+os.path.basename(pKey2))
+    pKeyNoMatch=os.path.join(os.path.dirname(pKey1),os.path.basename(pKey1)[:-4]+'_NoMatchTo_'+os.path.basename(pKey2))
+    k1=ReadKeypoints(pKey1)
+    k2=ReadKeypoints(pKey2)
+    [r,h1]=GetResolutionHeaderFromKeyFile(pKey1)
+    [r,h2]=GetResolutionHeaderFromKeyFile(pKey2)
+    lIdx2=GetIndexFromMatchFile(pIdxImg1)
+    lIdx1=GetIndexFromMatchFile(pIdxImg2)
+    kMatch=k1[lIdx1,:]
+    WriteKeyFile(pKeyMatch,kMatch,h1)
+    if keyUnmatched==True:
+        kUnmatched1=SubstractKeyImages(k1,kMatch)
+        kMatch2=k2[lIdx2,:]
+        kUnmatched2=SubstractKeyImages(k2,kMatch2)
+        kUnmatched=np.append(kUnmatched1,kUnmatched2,axis=0)
+        WriteKeyFile(pKeyNoMatch,kUnmatched,h1)
+        
+def FilterKeyUsingIndexFile2(pKey1masked,pKey2ss,pIdxImg1,pIdxImg2,keyUnmatched=True):
+    #pKeyMatched must contain the string 'Match'
+    pKeyMatch=os.path.join(os.path.dirname(pKey1masked),os.path.basename(pKey1masked)[:-4]+'_MatchTo_'+os.path.basename(pKey2ss))
+    pKeyNoMatchSS=os.path.join(os.path.dirname(pKey1masked),'NoMatch'+os.path.basename(pKey1masked))
+    pKeyNoMatchMasked=os.path.join(os.path.dirname(pKey1masked),'NoMatch'+os.path.basename(pKey2ss))
+    k1=ReadKeypoints(pKey1masked)
+    k2=ReadKeypoints(pKey2ss)
+    [r,h1]=GetResolutionHeaderFromKeyFile(pKey1masked)
+    [r,h2]=GetResolutionHeaderFromKeyFile(pKey2ss)
+    lIdx2=GetIndexFromMatchFile(pIdxImg1)
+    lIdx1=GetIndexFromMatchFile(pIdxImg2)
+    kMatch=k1[lIdx1,:]
+    WriteKeyFile(pKeyMatch,kMatch,h1)
+    if keyUnmatched==True:
+        kUnmatched1=SubstractKeyImages(k1,kMatch)
+        kMatch2=k2[lIdx2,:]
+        kUnmatched2=SubstractKeyImages(k2,kMatch2)
+        WriteKeyFile(pKeyNoMatchSS,kUnmatched2,h1)
+        WriteKeyFile(pKeyNoMatchMasked,kUnmatched1,h1)
+
+
 def CompareKeyImages(k1,k2):
     s=0
     if k1.shape[0]>k2.shape[0]:
@@ -236,7 +297,6 @@ def SubstractKeyImages(positive,negative):
 
 def FilterKeysWithMask(k,mask,considerScale=False):
     k2=np.zeros(k.shape)
-    invMask=~mask
     prevXYZ=np.array([1,2,3])
     transfered=0
     for i in range(k.shape[0]):
@@ -249,10 +309,8 @@ def FilterKeysWithMask(k,mask,considerScale=False):
                 else:
                     transfered=0
             else:
-                mask2=np.zeros(mask.shape,dtype=np.bool)
-                c=int(k[i,kIP.scale]/np.sqrt(3)) #half the side of the smallest cube inside the keypoint
-                mask2[XYZ[0]-c:XYZ[0]+c,XYZ[1]-c:XYZ[1]+c,XYZ[2]-c:XYZ[2]+c]=True
-                if ~np.any(np.logical_and(invMask,mask2)):
+                c=2*int(k[i,kIP.scale]) #half the side of the smallest cube inside the keypoint
+                if np.all(mask[XYZ[0]-c:XYZ[0]+c,XYZ[1]-c:XYZ[1]+c,XYZ[2]-c:XYZ[2]+c]):
                     k2[i,:]=k[i,:]         
                     transfered=1
                 else:
@@ -263,23 +321,86 @@ def FilterKeysWithMask(k,mask,considerScale=False):
     k2=k2[~np.all(k2==0,axis=1)]
     return k2
 
+def FindMatchBetweenBrainKeypoints(pSS,pOri,maxDistance=5000):
+    #input files contain only non-rotated keypoints
+    #at maximum 5000 the maximum difference of position is 4 pixel (measured on 100206)
+    pOut=os.path.join(os.path.dirname(pSS),'match.csv')
+    kSS=ReadKeypoints(pSS)
+    kOri=ReadKeypoints(pOri)
+    flannOri = FLANN()
+    paramsOri = flannOri.build_index(kOri[:,kIP.descriptor], algorithm="kdtree",trees=8);
+    outputMat=np.zeros((0,2))
+    for i in range(kSS.shape[0]):
+        idx1, dist1 = flannOri.nn_index(kSS[i,kIP.descriptor],1, checks=paramsOri["checks"])
+        idx=int(idx1[0])
+        dist=dist1[0]
+        if dist<maxDistance:
+            a=np.array([[i,idx]])
+            outputMat=np.concatenate((outputMat,a),axis=0)
+        # outputMat[i,0]=dist
+        # outputMat[i,1]=np.sqrt(np.sum((kSS[i,kIP.XYZ]-kOri[idx,kIP.XYZ])**2))
+        
+    pandas.DataFrame(outputMat).to_csv(pOut, header=None, index=None)
+    return np.int64(outputMat)
+    
+def GenerateMatchingKeypointsFiles(pSS,pOri):
+    pDir=os.path.dirname(pSS)
+    kSS=ReadKeypoints(pSS)
+    kOri=ReadKeypoints(pOri)
+    match=FindMatchBetweenBrainKeypoints(pSS,pOri)
+    kSSMatched=kSS[match[:,0],:]
+    kOriMatched=kOri[match[:,1],:]
+    mask=np.arange(kSS.shape[0])
+    mask[match[:,0]]=-1
+    invMask=mask!=-1
+    kSSnoMatch=kSS[invMask,:]
+    mask=np.arange(kOri.shape[0])
+    mask[match[:,1]]=-1
+    invMask=mask!=-1
+    kOrinoMatch=kOri[invMask,:]
+    WriteKeyFile(os.path.join(pDir,'oriMatched.key'),kOriMatched)
+    WriteKeyFile(os.path.join(pDir,'oriNoMatch.key'),kOrinoMatch)
+    WriteKeyFile(os.path.join(pDir,'ssNoMatch.key'),kSSnoMatch)
+    
+    
+pSS=r"S:\75mmHCP\visualisation\modified\100206ss.key"
+pOri=r"S:\75mmHCP\visualisation\modified\100206original.key"
+GenerateMatchingKeypointsFiles(pSS,pOri)
+
+# def CreateMaskKeyFiles(maskP,keyTestP,keyMaskP):
+#     maskF=os.listdir(maskP)
+#     keyTestF=os.listdir(keyTestP)
+#     for f in maskF:
+#         s1='_masked_gfc_reg.hdr'
+#         if s1 in f:
+#             n=f[:9]
+#             print(n)
+#             keyTestFP=os.path.join(keyTestP,[x for x in keyTestF if n in x][0])
+#             maskFP=os.path.join(maskP,f)
+#             keyMaskFP=os.path.join(keyMaskP,f[:-3]+'key')
+#             k=ReadKeypoints(keyTestFP)
+#             [r,h]=GetResolutionHeaderFromKeyFile(keyTestFP)
+#             img=nib.load(maskFP)
+#             mask=np.squeeze(img.get_fdata())>0
+#             brainK=FilterKeysWithMask(k,mask)
+#             WriteKeyFile(keyMaskFP,brainK,header=h)
+            
+
 def CreateMaskKeyFiles(maskP,keyTestP,keyMaskP):
     maskF=os.listdir(maskP)
     keyTestF=os.listdir(keyTestP)
-    for f in maskF:
-        s1='_masked_gfc_reg.hdr'
-        if s1 in f:
-            n=f[:9]
-            print(n)
-            keyTestFP=os.path.join(keyTestP,[x for x in keyTestF if n in x][0])
-            maskFP=os.path.join(maskP,f)
-            keyMaskFP=os.path.join(keyMaskP,f[:-3]+'key')
-            k=ReadKeypoints(keyTestFP)
-            [r,h]=GetResolutionHeaderFromKeyFile(keyTestFP)
-            img=nib.load(maskFP)
-            mask=np.squeeze(img.get_fdata())>0
-            brainK=FilterKeysWithMask(k,mask)
-            WriteKeyFile(keyMaskFP,brainK,header=h)
+    for f in keyTestF:
+        n=f[:-4]
+        print(n)
+        keyTestFP=os.path.join(keyTestP,f)
+        maskFP=os.path.join(maskP,[x for x in maskF if n in x][0])
+        keyMaskFP=os.path.join(keyMaskP,f[:-3]+'key')
+        k=ReadKeypoints(keyTestFP)
+        [r,h]=GetResolutionHeaderFromKeyFile(keyTestFP)
+        img=nib.load(maskFP)
+        mask=np.squeeze(img.get_fdata())>0
+        brainK=FilterKeysWithMask(k,mask)
+        WriteKeyFile(keyMaskFP,brainK,header=h)
 
 
 def GetSubCube(array,lowBound,shapeSubCube):
