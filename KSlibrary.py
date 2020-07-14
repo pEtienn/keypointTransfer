@@ -17,6 +17,7 @@ import pandas
 from numba import guvectorize,float64,int64
 import sys
 import subprocess
+import scipy.ndimage as ndi
 
 class keyInformationPosition():
     """
@@ -31,12 +32,25 @@ class keyInformationPosition():
     noFlag=[x for x in range(81) if x != 16]
     
 kIP=keyInformationPosition()
-
+#edges=[0,4.089,4.387,5.153,6.108]
 def ApplyFuncToKey(path,fct,args):
     k=ReadKeypoints(path)
     r,h=GetResolutionHeaderFromKeyFile(path)
     k1=fct(k,*args)
     WriteKeyFile(path,k1,h)
+    
+def ApplyFuncToKeyInFolder(srcFolder,fct,args,dstFolder=None):
+    if dstFolder==None:
+        dstFolder=srcFolder
+    
+    allF=os.listdir(srcFolder)
+    
+    for f in allF:
+        if os.path.splitext(f)[1]=='.key':
+            k=ReadKeypoints(os.path.join(srcFolder,f))
+            r,h=GetResolutionHeaderFromKeyFile(os.path.join(srcFolder,f))
+            k1=fct(k,*args)
+            WriteKeyFile(os.path.join(dstFolder,f),k1,h)
     
 def getDC(computed,truth,value):
     mapC=computed==value
@@ -45,6 +59,11 @@ def getDC(computed,truth,value):
     den=np.sum(mapC)+np.sum(mapT)
     return num/den
 
+def FilterByScale(key,minScale,maxScale):
+    k1=key[key[:,kIP.scale]>minScale,:]
+    k1=k1[k1[:,kIP.scale]<maxScale,:]
+    return k1
+    
 def FilterKeysByClass(keys,classValue):
     return keys[np.int32(keys[:,kIP.flag])&15==classValue,:]
 
@@ -295,23 +314,25 @@ def SubstractKeyImages(positive,negative):
     out=rest[~np.all(rest==0,axis=1)]
     return out
 
-def FilterKeysWithMask(k,mask,considerScale=False):
+def FilterKeysWithMask(k,mask,scaleMasks=[],scales=[]):
     k2=np.zeros(k.shape)
     prevXYZ=np.array([1,2,3])
     transfered=0
     for i in range(k.shape[0]):
         XYZ=np.int32(k[i,kIP.XYZ])
         if ~np.allclose(XYZ,prevXYZ): #used to skip keypoints with different rotation
-            if considerScale==False:
+            if scaleMasks==[]:
                 if mask[tuple(XYZ)]==True:
                     k2[i,:]=k[i,:]
                     transfered=1
                 else:
                     transfered=0
             else:
-                c=2*int(k[i,kIP.scale]) #half the side of the smallest cube inside the keypoint
-                if np.all(mask[XYZ[0]-c:XYZ[0]+c,XYZ[1]-c:XYZ[1]+c,XYZ[2]-c:XYZ[2]+c]):
-                    k2[i,:]=k[i,:]         
+                scale=k[i,kIP.scale]
+                j=np.argmin(np.abs(scales-scale)) #closest scale mask
+                sMask=scaleMasks[j]
+                if sMask[tuple(XYZ)]==True:
+                    k2[i,:]=k[i,:]
                     transfered=1
                 else:
                     transfered=0
@@ -321,10 +342,96 @@ def FilterKeysWithMask(k,mask,considerScale=False):
     k2=k2[~np.all(k2==0,axis=1)]
     return k2
 
+def fill(array2D,y0):
+    for x in range(array2D.shape[0]):
+           ind=np.argwhere(array2D[x,:])
+           if ind.any():
+               d=int(y0-ind[0])
+               array2D[x,y0-d:y0+d+1]=True
+    
+def drawCircle(array, x0, y0, radius):
+    #mid-point circle drawing algorithm
+    f = 1 - radius
+    ddf_x = 1
+    ddf_y = -2 * radius
+    x = 0
+    y = radius
+    array[x0, y0 + radius]=True
+    array[x0, y0 - radius]=True
+    array[x0 + radius, y0]=True
+    array[x0 - radius, y0]=True
+
+    while x < y:
+        if f >= 0: 
+            y -= 1
+            ddf_y += 2
+            f += ddf_y
+        x += 1
+        ddf_x += 2
+        f += ddf_x    
+        array[x0 + x, y0 + y ]=True
+        array[x0 - x, y0 + y ]=True
+        array[x0 + x, y0 - y ]=True
+        array[x0 - x, y0 - y ]=True
+        array[x0 + y, y0 + x ]=True
+        array[x0 - y, y0 + x ]=True
+        array[x0 + y, y0 - x ]=True
+        array[x0 - y, y0 - x ]=True
+def drawSphere(array,x0,y0,z0,radius):
+    r=0
+    drawCircle(array[:,:,z0],x0,y0,radius)
+    fill(array[:,:,z0],y0)
+    for i in range(radius,0,-1):  
+        
+        while radius+0.5>np.sqrt(r**2 +i**2):
+            r+=1
+        r-=1
+        drawCircle(array[:,:,z0+i],x0,y0,r)
+        drawCircle(array[:,:,z0-i],x0,y0,r)
+        fill(array[:,:,z0+i],y0)
+        fill(array[:,:,z0-i],y0)
+        
+def FilterKeyWithShiftedMask(pKeyFile,pSSImage,distanceRatio=1,dstFolder=None):
+    pK=pKeyFile
+    pM=pSSImage
+    maskF=os.listdir(pSSImage)
+    keyF=os.listdir(pK)
+    
+    m=9
+    scales=np.zeros(m)
+    for i in range(m):
+        scales[i]=1.6*np.power(2,(i/3))
+    if dstFolder==None:
+        dstFolder=os.path.join(pK,'key_d='+str(distanceRatio))
+        Path(dstFolder).mkdir(parents=True, exist_ok=True)
+
+    for f in keyF:
+        if f[-3:]=='key':
+            
+            n=f[:-4]
+            print(n)
+            keyFP=os.path.join(pK,f)
+            maskFP=os.path.join(pM,[x for x in maskF if n in x][0])
+    
+            k=ReadKeypoints(keyFP)
+            
+            #GenerateMasks
+            [arr,h]=ReadImage(maskFP)
+            mask=arr>0
+            lMask=[]
+            for i in  range(m):         
+                r=int(np.round(distanceRatio*scales[i]))
+                d=1+2*r
+                sphereElement=np.zeros((d,d,d))
+                drawSphere(sphereElement,r,r,r,r)
+                lMask.append(ndi.binary_erosion(mask,structure=sphereElement))
+            k2=FilterKeysWithMask(k,mask,lMask,scales)
+            WriteKeyFile(os.path.join(dstFolder,f),k2)
+
 def FindMatchBetweenBrainKeypoints(pSS,pOri,maxDistance=5000):
     #input files contain only non-rotated keypoints
     #at maximum 5000 the maximum difference of position is 4 pixel (measured on 100206)
-    pOut=os.path.join(os.path.dirname(pSS),'match.csv')
+    # pOut=os.path.join(os.path.dirname(pSS),'match.csv')
     kSS=ReadKeypoints(pSS)
     kOri=ReadKeypoints(pOri)
     flannOri = FLANN()
@@ -340,7 +447,7 @@ def FindMatchBetweenBrainKeypoints(pSS,pOri,maxDistance=5000):
         # outputMat[i,0]=dist
         # outputMat[i,1]=np.sqrt(np.sum((kSS[i,kIP.XYZ]-kOri[idx,kIP.XYZ])**2))
         
-    pandas.DataFrame(outputMat).to_csv(pOut, header=None, index=None)
+    # pandas.DataFrame(outputMat).to_csv(pOut, header=None, index=None)
     return np.int64(outputMat)
     
 def GenerateMatchingKeypointsFiles(pSS,pOri):
@@ -362,10 +469,7 @@ def GenerateMatchingKeypointsFiles(pSS,pOri):
     WriteKeyFile(os.path.join(pDir,'oriNoMatch.key'),kOrinoMatch)
     WriteKeyFile(os.path.join(pDir,'ssNoMatch.key'),kSSnoMatch)
     
-    
-pSS=r"S:\75mmHCP\visualisation\modified\100206ss.key"
-pOri=r"S:\75mmHCP\visualisation\modified\100206original.key"
-GenerateMatchingKeypointsFiles(pSS,pOri)
+
 
 # def CreateMaskKeyFiles(maskP,keyTestP,keyMaskP):
 #     maskF=os.listdir(maskP)
