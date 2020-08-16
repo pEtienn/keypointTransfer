@@ -19,7 +19,7 @@ import sys
 import subprocess
 import scipy.ndimage as ndi
 
-class keyInformationPosition():
+class keyInformationPosition:
     """
     information locations in SIFT datapoints
     in an array of SIFT keypoints, row are the number of the keypoints, and colums
@@ -407,26 +407,27 @@ def FilterKeyWithShiftedMask(pKeyFile,pSSImage,distanceRatio=1,dstFolder=None):
 
     for f in keyF:
         if f[-3:]=='key':
-            
-            n=f[:-4]
-            print(n)
-            keyFP=os.path.join(pK,f)
-            maskFP=os.path.join(pM,[x for x in maskF if n in x][0])
-    
-            k=ReadKeypoints(keyFP)
-            
-            #GenerateMasks
-            [arr,h]=ReadImage(maskFP)
-            mask=arr>0
-            lMask=[]
-            for i in  range(m):         
-                r=int(np.round(distanceRatio*scales[i]))
-                d=1+2*r
-                sphereElement=np.zeros((d,d,d))
-                drawSphere(sphereElement,r,r,r,r)
-                lMask.append(ndi.binary_erosion(mask,structure=sphereElement))
-            k2=FilterKeysWithMask(k,mask,lMask,scales)
-            WriteKeyFile(os.path.join(dstFolder,f),k2)
+            dstFile=os.path.join(dstFolder,f)
+            if not os.path.exists(dstFile): #for when the process crashes
+                n=f[:-4]
+                print(n)
+                keyFP=os.path.join(pK,f)
+                maskFP=os.path.join(pM,[x for x in maskF if n in x][0])
+        
+                k=ReadKeypoints(keyFP)
+                
+                #GenerateMasks
+                [arr,h]=ReadImage(maskFP)
+                mask=arr>0
+                lMask=[]
+                for i in  range(m):         
+                    r=int(np.round(distanceRatio*scales[i]))
+                    d=1+2*r
+                    sphereElement=np.zeros((d,d,d))
+                    drawSphere(sphereElement,r,r,r,r)
+                    lMask.append(ndi.binary_erosion(mask,structure=sphereElement))
+                k2=FilterKeysWithMask(k,mask,lMask,scales)
+                WriteKeyFile(dstFile,k2)
 
 def FindMatchBetweenBrainKeypoints(pSS,pOri,maxDistance=5000):
     #input files contain only non-rotated keypoints

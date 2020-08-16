@@ -33,9 +33,9 @@ pM=r'S:\HCP_NoSkullStrip_T1w\ss_images'
 pssK=r'S:\HCP_NoSkullStrip_T1w\ss_images\key'
 pNK=r"S:\HCP_NoSkullStrip_T1w\originalKeysVoxel_test\new"
 l=[pssK,poK]
-for a in l:
-    for i in range(1,3):
-        ks.FilterKeyWithShiftedMask(a,pM,distanceRatio=i,dstFolder=None)
+
+
+ks.FilterKeyWithShiftedMask(poK,pM,distanceRatio=2,dstFolder=None)
 # d1=r"key_d=1"
 # d2=r"key_d=2"
 # distanceRatio=1
