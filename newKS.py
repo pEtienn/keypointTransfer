@@ -21,7 +21,6 @@ import nibabel as nib
 import re
 from scipy.ndimage import gaussian_filter
 import pandas
-from numba import guvectorize,float64,int64
 import subprocess
 import scipy.ndimage as ndi
 
@@ -35,202 +34,7 @@ class kI:
     flag=16
     noFlag=[x for x in range(81) if x != 16] 
     
-
-#*********** Function to use other funciton more effectively with files *********
-    
-def ApplyFuncToKeyFile(fct,args):
-    """
-    Apply a function to a single keypoint file
-
-    example: ApplyFuncToKeyFile(FilterKeyByRotation,[r"S:\funWithKey\100307ori.key",True])
-    Parameters
-    ----------
-    fct : function name
-    args : arguments of the function, in the same order, with the keypoint path
-    instead of the keypoint matrix
-
-    Returns
-    -------
-    Modifies the function
-
-    """
-    k=ReadKeypoints(args[0])
-    r,h=GetResolutionHeaderFromKeyFile(args[0])
-    k1=fct(k,*args[1:])
-    WriteKeyFile(args[0],k1,h)
-    
-def ApplyFuncToKeyInDirectory(fct,args,dDst=None):
-    """
-    Apply function to all keypoint file in a directory. Either modifies the original
-    or create a modified version in dDst
-    
-    example: 
-    ApplyFuncToKeyInDirectory(FilterKeyByScale,[r'S:\funWithKey\ori',3,6],r'S:\funWithKey\destination')
-
-    Parameters
-    ----------
-    fct : function name
-    args : arguments of the function, in the same order, with the keypoint directory path
-    instead of the keypoint matrix
-    dDst : destination directory
-
-    Returns
-    -------
-    None.
-
-    """
-    srcFolder=args[0]
-    if dDst==None:
-        dDst=srcFolder
-    
-    allF=os.listdir(srcFolder)
-    
-    for f in allF:
-        if os.path.splitext(f)[1]=='.key': 
-            k=ReadKeypoints(os.path.join(srcFolder,f))
-            r,h=GetResolutionHeaderFromKeyFile(os.path.join(srcFolder,f))
-            k1=fct(k,*args[1:])
-            WriteKeyFile(os.path.join(dDst,f),k1,h)
-            
-def ApplyFuncToDirectoryPair(fct,args,dDst,nameFormat='(.+)\.'):
-    """
-    Execute functions needing 2 file input. First directory need to contain .key  files.
-    Second directory can contain either .key files or masks as medical skull-stripped images.
-    
-    The matching files from the second directory are found using nameFormat as a
-    Regular expression for finding a captured group containing the shared name
-    between the 2 file types. This allows for slight difference between the 2 name
-    formats. The current Regex will return the name of the file before the '.'.
-    
-    
-    
-    example:
-    ApplyFuncToDirectoryPair(FilterKeyWithShiftedMasks,[pOriginal,pMask,1.5],dst)
-
-    Parameters
-    ----------
-    fct : function name
-    args : arguments of the function, in the same order, with the keypoint directory path
-    instead of the keypoint matrix and a directory path instead of a keypoint matrix 
-    or a mask
-    dDst: destination directory,
-    nameFormat : regular expression for finding the shared name of the 2 file
-    types. The default is '(.+)\.'.
-
-    Returns
-    -------
-    A keypoint file in dDst for each keypoint file in the first directory
-
-    """
-    dMaster=args[0]
-    dSlave=args[1]
-    rName=re.compile(nameFormat)
-    allMasterFile=os.listdir(dMaster)
-    allSlaveFile=os.listdir(dSlave)
-    
-    if not os.path.exists(dDst):
-        os.makedirs(dDst)
-        
-    for nameMaster in allMasterFile:
-        if os.path.splitext(nameMaster)[1]=='.key': 
-            name=rName.findall(nameMaster)[0]
-            slaveName=[x for x in allSlaveFile if name in x][0]
-            pSlave=os.path.join(dSlave,slaveName)
-            arg1=ReadKeypoints(os.path.join(dMaster,nameMaster))
-            r,h=GetResolutionHeaderFromKeyFile(os.path.join(dMaster,nameMaster))
-            if Path(pSlave).suffix=='.key':
-                arg2=ReadKeypoints(pSlave)
-            else: #we assume we want a mask
-                arg2=ReadImage(pSlave)[0]>0
-                    
-            k1=fct(arg1,arg2,*args[2:])
-            WriteKeyFile(os.path.join(dDst,name+'.key'),k1,h)
-    
-            
-            
-    
-def getDC(computed,truth,value):
-    """
-    Calculate Dice coefficient between 2 class map of any dimension for a class==value
-
-    Parameters
-    ----------
-    computed : array
-    truth : array
-    value : integer
-
-    Returns
-    -------
-    Dice coefficient
-
-    """
-    mapC=computed==value
-    mapT=truth==value
-    num=2*np.sum(np.logical_and(mapC,mapT))
-    den=np.sum(mapC)+np.sum(mapT)
-    return num/den
-
-def FilterKeyByScale(mKey,minScale,maxScale):
-    """
-    Returns a subset of keypoint with scale between min and maxScale from the matrix of keypoint mKey. 
-
-    Parameters
-    ----------
-    mKey : n keypoints in a matrix of size (n,81)
-    minScale : float
-    maxScale : float
-
-    Returns
-    -------
-    k1 : subset of keypoints
-
-    """
-    mKey1=mKey[mKey[:,kI.scale]>minScale,:]
-    mKey1=mKey1[mKey1[:,kI.scale]<maxScale,:]
-    return mKey1
-    
-def FilterKeyByClass(mKey,classValue):
-    """
-    Returns keys with flags equal to classValue
-
-    """
-    return mKey[np.int32(mKey[:,kI.flag])&15==classValue,:]
-
-def FilterKeyByRotation(mKey,rotation=False):
-    """
-    Returns keys with the specified rotation
-    """
-    if rotation==False:
-        return mKey[~np.int32(mKey[:,kI.flag])&32==32,:]
-    else:
-        return mKey[np.int32(mKey[:,kI.flag])&32==32,:]
-    
-    
-def ExtractAllKeys(dVolume,dDst,pExecutable=r"S:\75mmHCP\featExtract.exe",volumeID='(\d{6})[_.]'):
-    """
-    Extract keypoints from all image volumes in dVolume.
-
-    Parameters
-    ----------
-    dVolume : volume directory
-    dDst : destination directory
-    pExecutable : path of the featExtract executable
-    volumeID : regex volume ID, used to shorten names
-
-    Returns
-    -------
-    Keypoint files located in dDst
-
-    """
-    rVolumeID=re.compile(volumeID)
-    allF=os.listdir(dVolume)
-    print('extracting keypoints')
-    for f in allF:
-        num=rVolumeID.findall(f)[0]
-        print(num)
-        list_files = subprocess.run([pExecutable,os.path.join(dVolume,f),os.path.join(dDst,num+'.key')])
-        print("The exit code was: %d" % list_files.returncode)
-    
+#********** Read write utilities ***********************************************
 def ReadImage(pFile):
     """
     Read volume image
@@ -376,54 +180,70 @@ def WriteKeyFile(path,mKey,header='default'):
             
         fW.write('\n')
     fW.close()
+
+
+def ExtractAllKeys(dVolume,dDst,pExecutable=r"S:\75mmHCP\featExtract.exe",volumeID='(\d{6})[_.]'):
+    """
+    Extract keypoints from all image volumes in dVolume.
+
+    Parameters
+    ----------
+    dVolume : volume directory
+    dDst : destination directory
+    pExecutable : path of the featExtract executable
+    volumeID : regex volume ID, used to shorten names
+
+    Returns
+    -------
+    Keypoint files located in dDst
+
+    """
+    rVolumeID=re.compile(volumeID)
+    allF=os.listdir(dVolume)
+    print('extracting keypoints')
+    for f in allF:
+        num=rVolumeID.findall(f)[0]
+        print(num)
+        list_files = subprocess.run([pExecutable,os.path.join(dVolume,f),os.path.join(dDst,num+'.key')])
+        print("The exit code was: %d" % list_files.returncode)
+        
+
+
+#******************* Filtering keypoint images **********************************
+def FilterKeyByScale(mKey,minScale,maxScale):
+    """
+    Returns a subset of keypoint with scale between min and maxScale from the matrix of keypoint mKey. 
+
+    Parameters
+    ----------
+    mKey : n keypoints in a matrix of size (n,81)
+    minScale : float
+    maxScale : float
+
+    Returns
+    -------
+    k1 : subset of keypoints
+
+    """
+    mKey1=mKey[mKey[:,kI.scale]>minScale,:]
+    mKey1=mKey1[mKey1[:,kI.scale]<maxScale,:]
+    return mKey1
     
-def CompareKeyImages(mKey1,mKey2):
+def FilterKeyByClass(mKey,classValue):
     """
-    Returns the number of exact keypoints match between 2 set of keypoints
-
-    Parameters
-    ----------
-    mKey1 : n keypoints in a matrix of size (n,81)
-    mKey2 : n keypoints in a matrix of size (n,81)
-
-    Returns
-    -------
-    s : number of exact keypoints
+    Returns keys with flags equal to classValue
 
     """
-    s=0
-    if mKey1.shape[0]>mKey2.shape[0]:
-        for i in range(mKey2.shape[0]):
-            if np.sum(np.all(mKey1[:,kI.noFlag]-mKey2[i,kI.noFlag]<1e-005,axis=1))==1:
-                s+=1
+    return mKey[np.int32(mKey[:,kI.flag])&15==classValue,:]
+
+def FilterKeyByRotation(mKey,rotation=False):
+    """
+    Returns keys with the specified rotation
+    """
+    if rotation==False:
+        return mKey[~np.int32(mKey[:,kI.flag])&32==32,:]
     else:
-        for i in range(mKey1.shape[0]):
-            if np.sum(np.all(mKey2[:,kI.noFlag]-mKey1[i,kI.noFlag]<1e-005,axis=1))==1:
-                s+=1
-    return s     
-
-
-def SubstractKeyImages(mKeyPositive,mKeyNegative):
-    """
-    Set difference mKeyPositive-mKeyNegative
-
-    Parameters
-    ----------
-    mKeyPositive : n keypoints in a matrix of size (n,81)
-    mKeyNegative : n keypoints in a matrix of size (n,81)
-
-    Returns
-    -------
-    out : resulting set
-
-    """
-    rest=np.copy(mKeyPositive)
-    for i in range(rest.shape[0]):
-        if np.sum(np.all(mKeyNegative[:,kI.noFlag]-rest[i,kI.noFlag]<1e-005,axis=1))==1:
-            rest[i,:]=0
-    out=rest[~np.all(rest==0,axis=1)]
-    return out
-
+        return mKey[np.int32(mKey[:,kI.flag])&32==32,:]
 
 def FilterKeysWithSingleMask(mKey,mask,distanceRatio=0):
     """
@@ -537,6 +357,55 @@ def _FilterKeysWithScaleMasks(mKey,scaleMasks,scales):
     mKey2=mKey2[~np.all(mKey2==0,axis=1)]
     return mKey2
 
+#******************* analysing and modifying keypoints
+    
+def CompareKeyImages(mKey1,mKey2):
+    """
+    Returns the number of exact keypoints match between 2 set of keypoints
+
+    Parameters
+    ----------
+    mKey1 : n keypoints in a matrix of size (n,81)
+    mKey2 : n keypoints in a matrix of size (n,81)
+
+    Returns
+    -------
+    s : number of exact keypoints
+
+    """
+    s=0
+    if mKey1.shape[0]>mKey2.shape[0]:
+        for i in range(mKey2.shape[0]):
+            if np.sum(np.all(mKey1[:,kI.noFlag]-mKey2[i,kI.noFlag]<1e-005,axis=1))==1:
+                s+=1
+    else:
+        for i in range(mKey1.shape[0]):
+            if np.sum(np.all(mKey2[:,kI.noFlag]-mKey1[i,kI.noFlag]<1e-005,axis=1))==1:
+                s+=1
+    return s     
+
+
+def SubstractKeyImages(mKeyPositive,mKeyNegative):
+    """
+    Set difference mKeyPositive-mKeyNegative
+
+    Parameters
+    ----------
+    mKeyPositive : n keypoints in a matrix of size (n,81)
+    mKeyNegative : n keypoints in a matrix of size (n,81)
+
+    Returns
+    -------
+    out : resulting set
+
+    """
+    rest=np.copy(mKeyPositive)
+    for i in range(rest.shape[0]):
+        if np.sum(np.all(mKeyNegative[:,kI.noFlag]-rest[i,kI.noFlag]<1e-005,axis=1))==1:
+            rest[i,:]=0
+    out=rest[~np.all(rest==0,axis=1)]
+    return out
+
 def FindMatchBetweenBrainKeypoints(mKeySkullStrippedKeypoint,mKeyOriginalKeypoint,maxDistance=5000):
     """
     Produce a list of matching keypoint between 2 keypoints list. This is meant
@@ -577,8 +446,119 @@ def FindMatchBetweenBrainKeypoints(mKeySkullStrippedKeypoint,mKeyOriginalKeypoin
     # pandas.DataFrame(outputMat).to_csv(pOut, header=None, index=None)
     return np.int64(outputMat)
 
+
+#*********** Function to use other funciton more effectively with files *********
+    
+def ApplyFuncToKeyFile(fct,args):
+    """
+    Apply a function to a single keypoint file
+
+    example: ApplyFuncToKeyFile(FilterKeyByRotation,[r"S:\funWithKey\100307ori.key",True])
+    Parameters
+    ----------
+    fct : function name
+    args : arguments of the function, in the same order, with the keypoint path
+    instead of the keypoint matrix
+
+    Returns
+    -------
+    Modifies the function
+
+    """
+    k=ReadKeypoints(args[0])
+    r,h=GetResolutionHeaderFromKeyFile(args[0])
+    k1=fct(k,*args[1:])
+    WriteKeyFile(args[0],k1,h)
+    
+def ApplyFuncToKeyInDirectory(fct,args,dDst=None):
+    """
+    Apply function to all keypoint file in a directory. Either modifies the original
+    or create a modified version in dDst
+    
+    example: 
+    ApplyFuncToKeyInDirectory(FilterKeyByScale,[r'S:\funWithKey\ori',3,6],r'S:\funWithKey\destination')
+
+    Parameters
+    ----------
+    fct : function name
+    args : arguments of the function, in the same order, with the keypoint directory path
+    instead of the keypoint matrix
+    dDst : destination directory
+
+    Returns
+    -------
+    None.
+
+    """
+    srcFolder=args[0]
+    if dDst==None:
+        dDst=srcFolder
+    
+    allF=os.listdir(srcFolder)
+    
+    for f in allF:
+        if os.path.splitext(f)[1]=='.key': 
+            k=ReadKeypoints(os.path.join(srcFolder,f))
+            r,h=GetResolutionHeaderFromKeyFile(os.path.join(srcFolder,f))
+            k1=fct(k,*args[1:])
+            WriteKeyFile(os.path.join(dDst,f),k1,h)
+            
+def ApplyFuncToDirectoryPair(fct,args,dDst,nameFormat='(.+)\.'):
+    """
+    Execute functions needing 2 file input. First directory need to contain .key  files.
+    Second directory can contain either .key files or masks as medical skull-stripped images.
+    
+    The matching files from the second directory are found using nameFormat as a
+    Regular expression for finding a captured group containing the shared name
+    between the 2 file types. This allows for slight difference between the 2 name
+    formats. The current Regex will return the name of the file before the '.'.
+    
+    
+    
+    example:
+    ApplyFuncToDirectoryPair(FilterKeyWithShiftedMasks,[pOriginal,pMask,1.5],dst)
+
+    Parameters
+    ----------
+    fct : function name
+    args : arguments of the function, in the same order, with the keypoint directory path
+    instead of the keypoint matrix and a directory path instead of a keypoint matrix 
+    or a mask
+    dDst: destination directory,
+    nameFormat : regular expression for finding the shared name of the 2 file
+    types. The default is '(.+)\.'.
+
+    Returns
+    -------
+    A keypoint file in dDst for each keypoint file in the first directory
+
+    """
+    dMaster=args[0]
+    dSlave=args[1]
+    rName=re.compile(nameFormat)
+    allMasterFile=os.listdir(dMaster)
+    allSlaveFile=os.listdir(dSlave)
+    
+    if not os.path.exists(dDst):
+        os.makedirs(dDst)
         
-#************ DRAW SPHERE ************************************************
+    for nameMaster in allMasterFile:
+        if os.path.splitext(nameMaster)[1]=='.key': 
+            name=rName.findall(nameMaster)[0]
+            slaveName=[x for x in allSlaveFile if name in x][0]
+            pSlave=os.path.join(dSlave,slaveName)
+            arg1=ReadKeypoints(os.path.join(dMaster,nameMaster))
+            r,h=GetResolutionHeaderFromKeyFile(os.path.join(dMaster,nameMaster))
+            if Path(pSlave).suffix=='.key':
+                arg2=ReadKeypoints(pSlave)
+            else: #we assume we want a mask
+                arg2=ReadImage(pSlave)[0]>0
+                    
+            k1=fct(arg1,arg2,*args[2:])
+            WriteKeyFile(os.path.join(dDst,name+'.key'),k1,h)
+        
+        
+#************ DRAW SPHERE ************************
 def fill(array2D,y0):
     for x in range(array2D.shape[0]):
            ind=np.argwhere(array2D[x,:])
